@@ -324,6 +324,21 @@ aws cloudformation describe-stacks \
 # 3. GitHub リポジトリの Settings → Secrets → AWS_ROLE_ARN に ARN を設定
 ```
 
+### 6.5 サプライチェーン防御策
+
+GitHub Actions およびフロントエンド依存パッケージに対するサプライチェーン攻撃への防御策。
+
+| # | 防御策 | 設定内容 | 対象ファイル |
+|---|---|---|---|
+| 1 | Dependabot Alerts | GitHub Settings → Code security で有効化 | (リポジトリ設定) |
+| 2 | dependabot.yml | npm / pip / github-actions の週次自動更新 | `.github/dependabot.yml` |
+| 3 | Dependency Review | PR 時に high 以上の脆弱性 + GPL/AGPL ライセンスを拒否 | `.github/workflows/dependency-review.yml` |
+| 4 | npm audit in CI | `npm audit --audit-level=high` でビルド時に脆弱性検出 | `.github/workflows/frontend.yml` |
+| 5 | npm audit signatures | `npm audit signatures` でパッケージの真正性検証 | `.github/workflows/frontend.yml` |
+| 6 | package-lock.json 厳密管理 | `npm ci` 使用、lock ファイルは git 管理 | `frontend/package-lock.json` |
+| 7 | ignore-scripts | `postinstall` 等の悪意あるスクリプト実行を防止 | `frontend/.npmrc` |
+| 8 | Actions SHA ピン留め | 全 Actions をフルレングス SHA で固定、Dependabot で自動更新 | `.github/workflows/*.yml` |
+
 ---
 
 ## 7. 実装順序

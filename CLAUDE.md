@@ -74,6 +74,14 @@ DynamoDB Local (Docker) で完全ローカル動作。`make dev-backend` で Dyn
 
 - GitHub Actions + OIDC 認証 (長期 Access Key 不使用)
 - `backend.yml`: lint → test → (main push のみ) sam deploy
-- `frontend.yml`: lint → test (デプロイは Amplify 側で自動)
+- `frontend.yml`: lint → test → npm audit → audit signatures (デプロイは Amplify 側で自動)
+- `dependency-review.yml`: PR 時に脆弱な依存・禁止ライセンスを検出
 - AWS 側セットアップ: `infra/github-oidc.yaml` で OIDC プロバイダー + IAM ロール作成
 - GitHub Secrets: `AWS_ROLE_ARN` のみ
+
+### Supply Chain Security
+
+- 全 Actions は SHA ピン留め（タグではなくフルレングス SHA で固定）
+- Dependabot が npm / pip / github-actions の依存を週次で自動更新
+- `frontend/.npmrc` に `ignore-scripts=true` で postinstall 攻撃を防止
+- PR 時に Dependency Review Action で脆弱性 + ライセンス検査
