@@ -24,8 +24,8 @@ AWS_DEFAULT_REGION=ap-northeast-1 .venv/bin/python -m pytest tests/unit/handlers
 .venv/bin/ruff check src/ tests/
 .venv/bin/ruff format src/ tests/
 
-# Local API
-sam build && sam local start-api --port 3000 --warm-containers EAGER
+# Local API (DynamoDB Local + SAM)
+make dev-backend    # docker compose up + create-table + sam build + sam local start-api
 ```
 
 ### Frontend (from `frontend/`)
@@ -66,6 +66,14 @@ Data flow: `useTodos()` composable holds reactive state (`todos`, `loading`, `er
 - Backend: pytest + moto (mock AWS). Shared `dynamo_table` fixture in `tests/conftest.py` creates mock DynamoDB table. Each handler test uses `@mock_aws` decorator.
 - Frontend: Vitest + happy-dom + @vue/test-utils. Services tested via `vi.mock('src/services/api')`. Composables tested via `vi.mock('src/services/todo.service')`.
 
-### Deploy
+### Local Dev
 
-Backend: `sam build && sam deploy`. Frontend: Amplify auto-deploys on `git push` (reads `amplify.yml`, injects `VITE_API_URL` env var).
+DynamoDB Local (Docker) で完全ローカル動作。`make dev-backend` で DynamoDB Local 起動 + テーブル作成 + SAM API 起動を一括実行。`env.json` で `DYNAMODB_ENDPOINT=http://host.docker.internal:8000` を Lambda コンテナに渡す。
+
+### CI/CD
+
+- GitHub Actions + OIDC 認証 (長期 Access Key 不使用)
+- `backend.yml`: lint → test → (main push のみ) sam deploy
+- `frontend.yml`: lint → test (デプロイは Amplify 側で自動)
+- AWS 側セットアップ: `infra/github-oidc.yaml` で OIDC プロバイダー + IAM ロール作成
+- GitHub Secrets: `AWS_ROLE_ARN` のみ

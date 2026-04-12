@@ -283,15 +283,45 @@ npx quasar dev
 
 ---
 
-## 6. デプロイフロー
+## 6. CI/CD
+
+### 6.1 GitHub Actions (OIDC 認証)
+
+- GitHub → AWS 間の認証は OIDC (OpenID Connect) を使用。長期 Access Key は使わない
+- AWS 側セットアップ: `infra/github-oidc.yaml` を手動デプロイして OIDC プロバイダー + IAM ロールを作成
+- GitHub Secrets: `AWS_ROLE_ARN` にロール ARN を設定
+
+### 6.2 ワークフロー
+
+| ワークフロー | トリガー | 処理 |
+|---|---|---|
+| `backend.yml` | `backend/**` への push/PR | lint → test → (main のみ) sam deploy |
+| `frontend.yml` | `frontend/**` への push/PR | lint → test |
+
+### 6.3 デプロイフロー
 
 ```
-1. cd backend && sam build && sam deploy --guided  → API URL を取得
-   (2回目以降: sam build && sam deploy)
-
+1. main に push → backend.yml が sam build && sam deploy (OIDC 認証)
 2. Amplify コンソールで VITE_API_URL 環境変数に API URL を設定 (初回 or URL 変更時のみ)
+3. main に push → Amplify 自動ビルド・デプロイ (フロントエンド)
+```
 
-3. git push → Amplify 自動ビルド・デプロイ
+### 6.4 初回セットアップ手順
+
+```bash
+# 1. OIDC プロバイダー + IAM ロールを作成
+aws cloudformation deploy \
+  --template-file infra/github-oidc.yaml \
+  --stack-name github-oidc-sam-todo \
+  --capabilities CAPABILITY_NAMED_IAM
+
+# 2. ロール ARN を取得
+aws cloudformation describe-stacks \
+  --stack-name github-oidc-sam-todo \
+  --query 'Stacks[0].Outputs[?OutputKey==`RoleArn`].OutputValue' \
+  --output text
+
+# 3. GitHub リポジトリの Settings → Secrets → AWS_ROLE_ARN に ARN を設定
 ```
 
 ---

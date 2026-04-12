@@ -1,0 +1,70 @@
+name: Backend CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+
+permissions:
+  id-token: write
+  contents: read
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv venv && . .venv/bin/activate && uv pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: .venv/bin/ruff check src/ tests/
+
+      - name: Format check
+        run: .venv/bin/ruff format --check src/ tests/
+
+      - name: Test
+        run: .venv/bin/python -m pytest tests/ -v
+        env:
+          AWS_DEFAULT_REGION: ap-northeast-1
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: aws-actions/setup-sam@v2
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-1
+
+      - name: SAM build
+        run: sam build
+
+      - name: SAM deploy
+        run: sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --stack-name sam-todo --resolve-s3

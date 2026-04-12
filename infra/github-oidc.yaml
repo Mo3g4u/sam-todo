@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions OIDC provider and IAM role for SAM Todo App
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: Mo3g4u
+  GitHubRepo:
+    Type: String
+    Default: sam-todo
+  DeployBranch:
+    Type: String
+    Default: main
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-actions-sam-todo
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${DeployBranch}
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Policies:
+        - PolicyName: sam-deploy-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: LambdaManagement
+                Effect: Allow
+                Action:
+                  - lambda:*
+                Resource: "*"
+              - Sid: APIGateway
+                Effect: Allow
+                Action:
+                  - apigateway:*
+                Resource: "*"
+              - Sid: DynamoDB
+                Effect: Allow
+                Action:
+                  - dynamodb:*
+                Resource: "*"
+              - Sid: IAMPassRole
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:GetRolePolicy
+                Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: IAM Role ARN for GitHub Actions
+    Value: !GetAtt GitHubActionsRole.Arn
+    Export:
+      Name: GitHubActionsRoleArn
