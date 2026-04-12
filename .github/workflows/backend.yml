@@ -66,5 +66,21 @@ jobs:
       - name: SAM build
         run: sam build
 
+      - name: Delete failed stack if exists
+        run: |
+          STATUS=$(aws cloudformation describe-stacks --stack-name sam-todo --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_FOUND")
+          if [ "$STATUS" = "ROLLBACK_COMPLETE" ]; then
+            echo "Deleting ROLLBACK_COMPLETE stack..."
+            aws cloudformation delete-stack --stack-name sam-todo
+            aws cloudformation wait stack-delete-complete --stack-name sam-todo
+          fi
+
       - name: SAM deploy
-        run: sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --stack-name sam-todo --resolve-s3 --capabilities CAPABILITY_IAM
+        run: |
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --stack-name sam-todo \
+            --resolve-s3 \
+            --capabilities CAPABILITY_IAM \
+            --parameter-overrides FrontendUrl=${{ secrets.FRONTEND_URL }}

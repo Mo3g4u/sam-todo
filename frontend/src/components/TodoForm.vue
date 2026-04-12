@@ -9,7 +9,13 @@
         class="col"
         :disable="loading"
       />
-      <q-btn type="submit" color="primary" label="追加" :loading="loading" :disable="!title.trim()" />
+      <q-btn
+        type="submit"
+        color="primary"
+        label="追加"
+        :loading="loading"
+        :disable="!title.trim()"
+      />
     </div>
   </q-form>
 </template>

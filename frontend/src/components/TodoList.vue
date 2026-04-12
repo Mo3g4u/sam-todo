@@ -1,6 +1,11 @@
 <template>
   <div>
-    <q-spinner v-if="loading" size="3em" color="primary" class="q-my-md full-width flex flex-center" />
+    <q-spinner
+      v-if="loading"
+      size="3em"
+      color="primary"
+      class="q-my-md full-width flex flex-center"
+    />
 
     <div v-else-if="todos.length === 0" class="text-grey text-center q-pa-lg">
       Todoはまだありません
