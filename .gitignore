@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# SAM
+backend/.aws-sam/
+backend/samconfig.toml
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.quasar/
+frontend/.npm/
+
+# Quasar temp compiled config
+frontend/quasar.config.ts.temporary.compiled.*.mjs
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env.local
+.env.*.local
+
+# E2E screenshots
+e2e/*.png
+
+# Claude Code
+.claude/

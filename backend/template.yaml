@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: SAM Todo App Backend
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - arm64
+    Timeout: 10
+    MemorySize: 128
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref TodoTable
+        DYNAMODB_ENDPOINT: ""
+
+Resources:
+  TodoApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: dev
+      CorsConfiguration:
+        AllowOrigins:
+          - "http://localhost:9000"
+          - "https://*.amplifyapp.com"
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+
+  CreateTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.create_todo.handler
+      CodeUri: src/
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TodoApi
+            Path: /todos
+            Method: POST
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  ListTodosFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.list_todos.handler
+      CodeUri: src/
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TodoApi
+            Path: /todos
+            Method: GET
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  GetTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.get_todo.handler
+      CodeUri: src/
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TodoApi
+            Path: /todos/{id}
+            Method: GET
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  UpdateTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.update_todo.handler
+      CodeUri: src/
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TodoApi
+            Path: /todos/{id}
+            Method: PUT
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  DeleteTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.delete_todo.handler
+      CodeUri: src/
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TodoApi
+            Path: /todos/{id}
+            Method: DELETE
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  TodoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: todo-table-dev
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${TodoApi}.execute-api.${AWS::Region}.amazonaws.com/dev"
