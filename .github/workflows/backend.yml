@@ -77,10 +77,14 @@ jobs:
 
       - name: SAM deploy
         run: |
+          PARAMS=""
+          if [ -n "${{ secrets.FRONTEND_URL }}" ]; then
+            PARAMS="--parameter-overrides FrontendUrl=${{ secrets.FRONTEND_URL }}"
+          fi
           sam deploy \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --stack-name sam-todo \
             --resolve-s3 \
             --capabilities CAPABILITY_IAM \
-            --parameter-overrides FrontendUrl=${{ secrets.FRONTEND_URL }}
+            $PARAMS
