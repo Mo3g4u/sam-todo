@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { flushPromises } from '@vue/test-utils';
 import type { Todo } from 'src/types/todo';
 
 const mockTodos: Todo[] = [
