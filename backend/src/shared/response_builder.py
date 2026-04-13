@@ -11,7 +11,7 @@ class _DecimalEncoder(json.JSONEncoder):
 
 
 def _cors_headers() -> dict:
-    allowed = os.environ.get("ALLOWED_ORIGINS", "http://localhost:9000")
+    allowed = os.environ.get("ALLOWED_ORIGINS", "http://localhost:9000").rstrip("/")
     return {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": allowed,
