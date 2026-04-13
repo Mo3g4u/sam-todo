@@ -62,6 +62,17 @@ Resources:
         info:
           title: SAM Todo API
           version: "1.0"
+        x-amazon-apigateway-cors:
+          allowOrigins:
+            - "*"
+          allowMethods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+          allowHeaders:
+            - Content-Type
         paths:
           /todos:
             post:
