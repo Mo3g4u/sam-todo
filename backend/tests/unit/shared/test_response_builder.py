@@ -1,4 +1,5 @@
 import json
+import os
 from decimal import Decimal
 
 from shared.response_builder import error, success
@@ -27,6 +28,19 @@ class TestSuccess:
 
         assert resp["headers"]["Content-Type"] == "application/json"
 
+    def test_includes_cors_headers(self):
+        resp = success({"ok": True})
+
+        assert "Access-Control-Allow-Origin" in resp["headers"]
+        assert "Access-Control-Allow-Methods" in resp["headers"]
+
+    def test_uses_allowed_origins_env(self):
+        os.environ["ALLOWED_ORIGINS"] = "https://example.com"
+        resp = success({"ok": True})
+        os.environ.pop("ALLOWED_ORIGINS")
+
+        assert resp["headers"]["Access-Control-Allow-Origin"] == "https://example.com"
+
 
 class TestError:
     def test_returns_400_by_default(self):
@@ -40,3 +54,8 @@ class TestError:
         resp = error("Not found", status=404)
 
         assert resp["statusCode"] == 404
+
+    def test_includes_cors_headers(self):
+        resp = error("Bad request")
+
+        assert "Access-Control-Allow-Origin" in resp["headers"]

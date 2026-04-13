@@ -26,6 +26,7 @@ Globals:
       Variables:
         TABLE_NAME: !Ref TodoTable
         DYNAMODB_ENDPOINT: ""
+        ALLOWED_ORIGINS: !If [HasFrontendUrl, !Ref FrontendUrl, "http://localhost:9000"]
 
 Resources:
   ApiGatewayInvokeRole:
@@ -56,18 +57,6 @@ Resources:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: dev
-      CorsConfiguration:
-        AllowOrigins:
-          - "http://localhost:9000"
-          - !If [HasFrontendUrl, !Ref FrontendUrl, !Ref "AWS::NoValue"]
-        AllowMethods:
-          - GET
-          - POST
-          - PUT
-          - DELETE
-          - OPTIONS
-        AllowHeaders:
-          - Content-Type
       DefinitionBody:
         openapi: "3.0.1"
         info:

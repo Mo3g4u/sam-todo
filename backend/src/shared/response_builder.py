@@ -1,4 +1,5 @@
 import json
+import os
 from decimal import Decimal
 
 
@@ -9,10 +10,20 @@ class _DecimalEncoder(json.JSONEncoder):
         return super().default(o)
 
 
-def success(body: dict, status: int = 200) -> dict:
+def _cors_headers() -> dict:
+    allowed = os.environ.get("ALLOWED_ORIGINS", "http://localhost:9000")
+    return {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": allowed,
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+    }
+
+
+def success(body, status: int = 200) -> dict:
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
+        "headers": _cors_headers(),
         "body": json.dumps(body, cls=_DecimalEncoder),
     }
 
@@ -20,6 +31,6 @@ def success(body: dict, status: int = 200) -> dict:
 def error(message: str, status: int = 400) -> dict:
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
+        "headers": _cors_headers(),
         "body": json.dumps({"error": message}),
     }
