@@ -7,11 +7,11 @@
 ```mermaid
 graph LR
     Browser["🌐 ブラウザ"]
-    Amplify["AWS Amplify<br/>Vue 3 + Quasar SPA"]
-    APIGW["API Gateway<br/>HTTP API v2"]
-    Role["IAM Role<br/>ApiGatewayInvokeRole"]
-    Lambda["Lambda × 5<br/>Python 3.12"]
-    DDB["DynamoDB<br/>todo-table-dev"]
+    Amplify["AWS Amplify\nVue 3 + Quasar SPA"]
+    APIGW["API Gateway\nHTTP API v2"]
+    Role["IAM Role\nApiGatewayInvokeRole"]
+    Lambda["Lambda × 5\nPython 3.12"]
+    DDB["DynamoDB\ntodo-table-dev"]
 
     Browser -->|HTTPS| Amplify
     Amplify -->|REST API| APIGW
@@ -149,12 +149,12 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     Dev["👨‍💻 Developer"]
-    GH["GitHub<br/>Mo3g4u/sam-todo"]
-    BCI["backend.yml<br/>lint → test → deploy"]
-    FCI["frontend.yml<br/>lint → test → audit"]
-    DR["dependency-review.yml<br/>脆弱性 + ライセンス"]
-    Bot["Dependabot<br/>週次更新 PR"]
-    AWS["AWS (OIDC)"]
+    GH["GitHub\nMo3g4u/sam-todo"]
+    BCI["backend.yml\nlint → test → deploy"]
+    FCI["frontend.yml\nlint → test → audit"]
+    DR["dependency-review.yml\n脆弱性 + ライセンス"]
+    Bot["Dependabot\n週次更新 PR"]
+    AWS["AWS OIDC"]
     SAM["SAM Deploy"]
     CF["CloudFormation"]
     LB["Lambda × 5"]
