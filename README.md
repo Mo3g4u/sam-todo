@@ -12,62 +12,82 @@ Vue 3 (Quasar) + AWS SAM (Lambda + DynamoDB + API Gateway) で構成した Todo 
 | コンピュート | AWS Lambda (Python 3.12, arm64) |
 | データベース | Amazon DynamoDB (オンデマンド) |
 | IaC | AWS SAM |
+| CI/CD | GitHub Actions (OIDC 認証) |
+
+## 前提条件
+
+- Docker Desktop
+- Python 3.12 + uv
+- Node.js 24+
+- SAM CLI
 
 ## ローカル開発
 
-### 前提条件
-
-- Docker Desktop
-- AWS CLI (`aws configure` 設定済み)
-- Python 3.12 + uv
-- Node.js 18+
-- SAM CLI
-
-### バックエンド
+### セットアップ
 
 ```bash
-cd backend
-uv venv && source .venv/bin/activate
-uv pip install -r requirements-dev.txt
-
-# テスト
-AWS_DEFAULT_REGION=ap-northeast-1 python -m pytest tests/ -v
-
-# lint / format
-ruff check src/ tests/
-ruff format src/ tests/
-
-# ローカル起動
-sam build
-sam local start-api --port 3000 --warm-containers EAGER
+make setup
 ```
 
-### フロントエンド
+### 起動
 
 ```bash
-cd frontend
-npm install
+# ターミナル 1: バックエンド (DynamoDB Local + SAM API)
+make dev-backend
 
-# テスト
-npx vitest run
-
-# lint / format
-npm run lint
-npm run format:check
-
-# ローカル起動
-npx quasar dev
+# ターミナル 2: フロントエンド
+make dev-frontend
 # → http://localhost:9000
 ```
 
-## デプロイ
+### テスト
 
 ```bash
-# 1. バックエンド
-cd backend
-sam build && sam deploy --guided
-
-# 2. Amplify コンソールで VITE_API_URL を設定
-
-# 3. git push → Amplify 自動デプロイ
+make test           # backend + frontend
+make test-backend   # pytest のみ
+make test-frontend  # vitest のみ
 ```
+
+### lint / format
+
+```bash
+make lint           # ruff check + eslint + prettier check
+make format         # ruff format + prettier write
+```
+
+## CI/CD
+
+### GitHub Actions
+
+| ワークフロー | トリガー | 処理 |
+|---|---|---|
+| `backend.yml` | `backend/**` の push/PR | lint → test → (main のみ) sam deploy |
+| `frontend.yml` | `frontend/**` の push/PR | lint → test → npm audit |
+| `dependency-review.yml` | 全 PR | 脆弱性 + ライセンス検査 |
+
+### 初回セットアップ
+
+```bash
+# 1. OIDC プロバイダー + IAM ロールを作成
+aws cloudformation deploy \
+  --template-file infra/github-oidc.yaml \
+  --stack-name github-oidc-sam-todo \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region ap-northeast-1
+
+# 2. ロール ARN を取得
+aws cloudformation describe-stacks \
+  --stack-name github-oidc-sam-todo \
+  --query 'Stacks[0].Outputs[?OutputKey==`RoleArn`].OutputValue' \
+  --output text --region ap-northeast-1
+
+# 3. GitHub Secrets に設定
+#    AWS_ROLE_ARN: 上記の ARN
+#    FRONTEND_URL: Amplify の URL (例: https://main.xxxx.amplifyapp.com)
+```
+
+### Amplify ホスティング
+
+1. Amplify コンソール → Git リポジトリ接続 → `main` ブランチ
+2. 環境変数 `VITE_API_URL` にバックエンド API URL を設定
+3. `git push` → 自動ビルド・デプロイ

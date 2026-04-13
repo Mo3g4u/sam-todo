@@ -47,13 +47,15 @@ npm run build                 # quasar build → dist/spa/
 ### Backend
 
 Lambda handlers (1 function = 1 endpoint) in `backend/src/handlers/` share utilities from `backend/src/shared/`:
-- `dynamo_helper.py` — DynamoDB Table resource singleton (reads `TABLE_NAME` env var)
-- `response_builder.py` — `success(body, status)` / `error(msg, status)` with Decimal JSON encoding
+- `dynamo_helper.py` — DynamoDB Table resource singleton (reads `TABLE_NAME` env var; `DYNAMODB_ENDPOINT` でローカル接続切り替え)
+- `response_builder.py` — `success(body, status)` / `error(msg, status)` with Decimal JSON encoding + CORS ヘッダー (`ALLOWED_ORIGINS` env var)
 - `models.py` — `create_todo_item(title)` generates UUID, PK=`TODO#<uuid>`, timestamps
 
 DynamoDB key design: single-table, PK=`TODO#<uuid>` (String), no GSI. Uses Scan (MVP).
 
-SAM template (`template.yaml`) defines HttpApi v2 with CORS for localhost:9000 and *.amplifyapp.com.
+Two SAM templates:
+- `template.yaml` — ローカル開発用 (Events ベース、`sam local start-api` 互換)
+- `template-deploy.yaml` — AWS デプロイ用 (DefinitionBody + IAM ロール、`lambda:AddPermission` 不使用で Control Tower CT.LAMBDA.PV.2 回避)
 
 ### Frontend
 

@@ -8,8 +8,8 @@
 |---|---|---|
 | フロントエンド | Vue 3 + Quasar v2 (TypeScript) | SPA、ユーザー操作 |
 | ホスティング | AWS Amplify Gen2 | フロントエンド配信、自動デプロイ |
-| API | Amazon API Gateway HTTP API v2 | REST エンドポイント、CORS 制御 |
-| コンピュート | AWS Lambda (Python 3.12, arm64) | CRUD ビジネスロジック |
+| API | Amazon API Gateway HTTP API v2 | REST エンドポイント、CORS プリフライト |
+| コンピュート | AWS Lambda (Python 3.12, arm64) | CRUD ビジネスロジック + CORS ヘッダー |
 | データベース | Amazon DynamoDB (オンデマンド) | Todo データ永続化 |
 | IaC | AWS SAM | インフラ定義・デプロイ |
 
@@ -22,9 +22,9 @@
 ```
 Browser → API Gateway (HTTP API v2) → Lambda Handler → DynamoDB
                                            ↓
-                                     shared/dynamo_helper.py  (テーブル接続)
-                                     shared/models.py         (データ生成)
-                                     shared/response_builder.py (レスポンス構築)
+                                     shared/dynamo_helper.py   (テーブル接続)
+                                     shared/models.py          (データ生成)
+                                     shared/response_builder.py (レスポンス + CORS)
 ```
 
 ### 2.2 エンドポイントと処理内容
@@ -42,14 +42,15 @@ Browser → API Gateway (HTTP API v2) → Lambda Handler → DynamoDB
 ```
 shared/
 ├── dynamo_helper.py    テーブルリソースのシングルトン取得
-│                       DYNAMODB_ENDPOINT があればローカル接続 (ダミー認証)
-│                       なければ AWS マネージド接続
+│                       DYNAMODB_ENDPOINT → ローカル接続 (ダミー認証)
+│                       未設定 → AWS マネージド接続
 │
 ├── models.py           create_todo_item(title) → Todo dict 生成
 │                       UUID v4, PK="TODO#<uuid>", ISO 8601 タイムスタンプ
 │
 └── response_builder.py success(body, status=200) → API Gateway レスポンス
                         error(message, status=400)
+                        全レスポンスに CORS ヘッダー付与 (ALLOWED_ORIGINS env var)
                         Decimal → float 変換の JSON エンコーダー内蔵
 ```
 
@@ -71,20 +72,33 @@ shared/
 - GSI なし (MVP、小規模のため Scan で十分)
 - BillingMode: PAY_PER_REQUEST (オンデマンド)
 
-### 2.5 エラーハンドリング
+### 2.5 CORS ヘッダー
+
+Lambda レスポンスに直接 CORS ヘッダーを含める方式:
+
+```python
+# response_builder.py
+{
+    "Access-Control-Allow-Origin": os.environ.get("ALLOWED_ORIGINS", "http://localhost:9000"),
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS"
+}
+```
+
+OPTIONS プリフライトは `template-deploy.yaml` の `x-amazon-apigateway-cors` で API Gateway が自動処理。
+
+### 2.6 エラーハンドリング
 
 全ハンドラーに try/except を設置。DynamoDB 接続エラー等の未処理例外は `500` で返す。
 
-```python
-# 例: list_todos.py
-try:
-    table = get_table()
-    resp = table.scan()
-    ...
-    return success(items)
-except Exception as e:
-    return error(str(e), status=500)
-```
+### 2.7 SAM テンプレート分離
+
+| テンプレート | 用途 | 理由 |
+|---|---|---|
+| `template.yaml` | ローカル開発 | SAM Events で自動ルーティング。`sam local start-api` 互換 |
+| `template-deploy.yaml` | AWS デプロイ | OpenAPI DefinitionBody + IAM ロール。Control Tower CT.LAMBDA.PV.2 回避 |
+
+Control Tower の SCP が `lambda:AddPermission` をブロックするため、SAM Events の自動生成する `AWS::Lambda::Permission` は使えない。代わりに `ApiGatewayInvokeRole` (IAM ロール) で API Gateway が Lambda を呼び出す。
 
 ---
 
@@ -136,21 +150,6 @@ API Gateway → Lambda → DynamoDB
 | `toggleTodo(todo)` | `todoService.update(id, {completed: !completed})` → 該当要素を差し替え |
 | `removeTodo(id)` | `todoService.remove(id)` → `todos` からフィルター除去 |
 
-### 3.4 型定義
-
-```typescript
-interface Todo {
-  id: string;
-  title: string;
-  completed: boolean;
-  created_at: string;
-  updated_at?: string;
-}
-
-interface CreateTodoRequest { title: string; }
-interface UpdateTodoRequest { title?: string; completed?: boolean; }
-```
-
 ---
 
 ## 4. ローカル開発環境
@@ -187,7 +186,7 @@ make dev-frontend    # Quasar dev server (port 9000)
 
 | ワークフロー | トリガー | 処理 |
 |---|---|---|
-| `backend.yml` | `backend/**` への push/PR | Ruff lint → pytest → (main のみ) SAM deploy |
+| `backend.yml` | `backend/**` への push/PR, 手動 | Ruff lint → pytest → (main のみ) SAM deploy |
 | `frontend.yml` | `frontend/**` への push/PR | ESLint → Prettier → Vitest → npm audit → audit signatures |
 | `dependency-review.yml` | 全 PR | 脆弱性 (high+) + 禁止ライセンス (GPL/AGPL) チェック |
 
@@ -201,12 +200,13 @@ Developer
   │       ├─ test job: ruff check → ruff format → pytest
   │       └─ deploy job (main only):
   │           ├─ OIDC で AWS AssumeRole
+  │           ├─ sam build --template-file template-deploy.yaml
   │           ├─ ROLLBACK_COMPLETE スタック自動削除
   │           └─ sam deploy → CloudFormation → Lambda + API Gateway + DynamoDB
   │
   └─ git push (frontend/**)
       ├─ GitHub Actions (frontend.yml): lint → test → audit
-      └─ Amplify Hosting: 自動ビルド・デプロイ (amplify.yml)
+      └─ Amplify Hosting: nvm install 24 → npm ci → npm run build → 自動デプロイ
 ```
 
 ### 5.3 AWS 認証
@@ -214,7 +214,11 @@ Developer
 - GitHub → AWS 間は **OIDC** (OpenID Connect) で認証
 - 長期 Access Key は使用しない
 - IAM ロール: `github-actions-sam-todo` (Mo3g4u/sam-todo の main ブランチのみ AssumeRole 可能)
-- GitHub Secrets: `AWS_ROLE_ARN` のみ
+- GitHub Secrets: `AWS_ROLE_ARN`, `FRONTEND_URL`
+
+### 5.4 Control Tower 対応
+
+`template-deploy.yaml` で DefinitionBody + `ApiGatewayInvokeRole` を使用。`lambda:AddPermission` を回避して Control Tower SCP (`CT.LAMBDA.PV.2`) に適合。
 
 ---
 
@@ -233,25 +237,17 @@ Developer
 
 ## 7. テスト戦略
 
-### バックエンド (pytest + moto)
+### バックエンド (pytest + moto) — 27 テスト
 
 ```
 tests/
 ├── conftest.py                 ← dynamo_table fixture (mock AWS DynamoDB)
 └── unit/
-    ├── handlers/               ← Lambda ハンドラーの CRUD テスト
-    │   ├── test_create_todo.py   (201, 400 バリデーション)
-    │   ├── test_list_todos.py    (空リスト, ソート順)
-    │   ├── test_get_todo.py      (200, 404)
-    │   ├── test_update_todo.py   (title更新, completed更新, 404)
-    │   └── test_delete_todo.py   (204, 存在しないIDも204)
-    └── shared/                 ← 共通ユーティリティのテスト
-        ├── test_models.py        (フィールド, UUID一意性, タイムスタンプ)
-        ├── test_response_builder.py (ステータス, Decimal, ヘッダー)
-        └── test_dynamo_helper.py (テーブル取得, エンドポイント, KeyError)
+    ├── handlers/               ← Lambda ハンドラーの CRUD テスト (12)
+    └── shared/                 ← 共通ユーティリティのテスト (15)
 ```
 
-### フロントエンド (Vitest + happy-dom)
+### フロントエンド (Vitest + happy-dom) — 10 テスト
 
 ```
 tests/unit/
@@ -266,51 +262,4 @@ tests/unit/
 ```
 e2e/
 └── todo_app.py                 ← ブラウザで CRUD 全操作を自動テスト
-```
-
----
-
-## 8. ディレクトリ構成
-
-```
-sam-todo/
-├── backend/
-│   ├── template.yaml               SAM テンプレート
-│   ├── docker-compose.yml           DynamoDB Local
-│   ├── env.json                     ローカル開発用環境変数
-│   ├── scripts/create-table.sh      テーブル自動作成
-│   ├── pyproject.toml               pytest + Ruff 設定
-│   ├── requirements-dev.txt         開発依存 (pytest, moto, ruff)
-│   ├── src/
-│   │   ├── requirements.txt         Lambda 依存 (boto3)
-│   │   ├── handlers/                Lambda ハンドラー x5
-│   │   └── shared/                  共通ユーティリティ
-│   └── tests/                       pytest テスト
-├── frontend/
-│   ├── package.json                 依存 + スクリプト
-│   ├── quasar.config.ts             Quasar 設定
-│   ├── vitest.config.ts             Vitest 設定
-│   ├── .eslintrc.cjs / .prettierrc  Lint + Format 設定
-│   ├── .npmrc                       ignore-scripts=true
-│   ├── .env.development             VITE_API_URL=http://localhost:3000
-│   ├── src/
-│   │   ├── App.vue                  ルートレイアウト
-│   │   ├── pages/TodoPage.vue       メインページ
-│   │   ├── components/              UI コンポーネント x3
-│   │   ├── composables/useTodos.ts  状態管理
-│   │   ├── services/                API 通信レイヤー
-│   │   ├── types/todo.ts            TypeScript 型定義
-│   │   └── router/                  Vue Router 設定
-│   └── tests/                       Vitest テスト
-├── e2e/                             Playwright E2E テスト
-├── infra/github-oidc.yaml           OIDC 用 CloudFormation
-├── .github/
-│   ├── workflows/                   CI/CD ワークフロー x3
-│   └── dependabot.yml               自動依存更新
-├── amplify.yml                      Amplify ビルド設定
-├── Makefile                         開発コマンド
-├── CLAUDE.md                        Claude Code ガイダンス
-└── docs/
-    ├── design.md                    設計ドキュメント
-    └── architecture.md              本ドキュメント
 ```
