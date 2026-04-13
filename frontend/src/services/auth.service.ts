@@ -6,20 +6,29 @@ import {
   CognitoUserSession,
 } from 'amazon-cognito-identity-js';
 
-const userPool = new CognitoUserPool({
-  UserPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID as string,
-  ClientId: import.meta.env.VITE_COGNITO_CLIENT_ID as string,
-});
+let userPool: CognitoUserPool | null = null;
+
+function getUserPool(): CognitoUserPool {
+  if (!userPool) {
+    const poolId = import.meta.env.VITE_COGNITO_USER_POOL_ID as string;
+    const clientId = import.meta.env.VITE_COGNITO_CLIENT_ID as string;
+    if (!poolId || !clientId) {
+      throw new Error('Cognito environment variables are not configured');
+    }
+    userPool = new CognitoUserPool({ UserPoolId: poolId, ClientId: clientId });
+  }
+  return userPool;
+}
 
 function getCognitoUser(email: string): CognitoUser {
-  return new CognitoUser({ Username: email, Pool: userPool });
+  return new CognitoUser({ Username: email, Pool: getUserPool() });
 }
 
 export const authService = {
   signUp(email: string, password: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const attributes = [new CognitoUserAttribute({ Name: 'email', Value: email })];
-      userPool.signUp(email, password, attributes, [], (err) => {
+      getUserPool().signUp(email, password, attributes, [], (err) => {
         if (err) return reject(err);
         resolve();
       });
@@ -46,18 +55,26 @@ export const authService = {
   },
 
   signOut(): void {
-    const user = userPool.getCurrentUser();
-    if (user) user.signOut();
+    try {
+      const user = getUserPool().getCurrentUser();
+      if (user) user.signOut();
+    } catch {
+      // pool not initialized = not logged in
+    }
   },
 
   getSession(): Promise<CognitoUserSession | null> {
     return new Promise((resolve) => {
-      const user = userPool.getCurrentUser();
-      if (!user) return resolve(null);
-      user.getSession((err: Error | null, session: CognitoUserSession | null) => {
-        if (err || !session || !session.isValid()) return resolve(null);
-        resolve(session);
-      });
+      try {
+        const user = getUserPool().getCurrentUser();
+        if (!user) return resolve(null);
+        user.getSession((err: Error | null, session: CognitoUserSession | null) => {
+          if (err || !session || !session.isValid()) return resolve(null);
+          resolve(session);
+        });
+      } catch {
+        resolve(null);
+      }
     });
   },
 
