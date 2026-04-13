@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 
+from shared.auth import get_user_id
 from shared.dynamo_helper import get_table
 from shared.response_builder import error, success
 
@@ -14,9 +15,11 @@ def handler(event, context):
         return error("Invalid JSON body")
 
     try:
+        user_id = get_user_id(event)
         table = get_table()
+        key = {"PK": f"USER#{user_id}", "SK": f"TODO#{todo_id}"}
 
-        existing = table.get_item(Key={"PK": f"TODO#{todo_id}"}).get("Item")
+        existing = table.get_item(Key=key).get("Item")
         if not existing:
             return error("Todo not found", status=404)
 
@@ -42,7 +45,7 @@ def handler(event, context):
         expr_values[":u"] = now
 
         resp = table.update_item(
-            Key={"PK": f"TODO#{todo_id}"},
+            Key=key,
             UpdateExpression="SET " + ", ".join(update_expr_parts),
             ExpressionAttributeNames=expr_names if expr_names else None,
             ExpressionAttributeValues=expr_values,
@@ -51,6 +54,7 @@ def handler(event, context):
 
         item = resp["Attributes"]
         item.pop("PK", None)
+        item.pop("SK", None)
         return success(item)
     except Exception as e:
         return error(str(e), status=500)

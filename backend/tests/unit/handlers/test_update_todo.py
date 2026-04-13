@@ -4,16 +4,17 @@ from moto import mock_aws
 
 from handlers.create_todo import handler as create_handler
 from handlers.update_todo import handler
+from tests.conftest import make_event
 
 
 class TestUpdateTodoHandler:
     @mock_aws
     def test_updates_title(self, dynamo_table):
-        create_resp = create_handler({"body": json.dumps({"title": "元のタイトル"})}, None)
+        create_resp = create_handler(make_event(body={"title": "元のタイトル"}), None)
         todo_id = json.loads(create_resp["body"])["id"]
 
         resp = handler(
-            {"pathParameters": {"id": todo_id}, "body": json.dumps({"title": "新しいタイトル"})},
+            make_event(body={"title": "新しいタイトル"}, path_params={"id": todo_id}),
             None,
         )
 
@@ -23,11 +24,11 @@ class TestUpdateTodoHandler:
 
     @mock_aws
     def test_updates_completed(self, dynamo_table):
-        create_resp = create_handler({"body": json.dumps({"title": "テスト"})}, None)
+        create_resp = create_handler(make_event(body={"title": "テスト"}), None)
         todo_id = json.loads(create_resp["body"])["id"]
 
         resp = handler(
-            {"pathParameters": {"id": todo_id}, "body": json.dumps({"completed": True})},
+            make_event(body={"completed": True}, path_params={"id": todo_id}),
             None,
         )
 
@@ -38,7 +39,19 @@ class TestUpdateTodoHandler:
     @mock_aws
     def test_returns_404_when_not_found(self, dynamo_table):
         resp = handler(
-            {"pathParameters": {"id": "nonexistent"}, "body": json.dumps({"title": "x"})},
+            make_event(body={"title": "x"}, path_params={"id": "nonexistent"}),
+            None,
+        )
+
+        assert resp["statusCode"] == 404
+
+    @mock_aws
+    def test_returns_404_for_other_users_todo(self, dynamo_table):
+        create_resp = create_handler(make_event(body={"title": "他人"}, user_id="other-user"), None)
+        todo_id = json.loads(create_resp["body"])["id"]
+
+        resp = handler(
+            make_event(body={"completed": True}, path_params={"id": todo_id}),
             None,
         )
 

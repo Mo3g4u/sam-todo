@@ -2,10 +2,6 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: SAM Todo App Backend (AWS Deployment)
 
-# Control Tower CT.LAMBDA.PV.2 により lambda:AddPermission が SCP で制限されるため、
-# DefinitionBody + IAM ロール方式で API Gateway → Lambda の呼び出し権限を設定する。
-# SAM の Events 自動生成 (Lambda::Permission) は使わない。
-
 Parameters:
   FrontendUrl:
     Type: String
@@ -29,6 +25,47 @@ Globals:
         ALLOWED_ORIGINS: !If [HasFrontendUrl, !Ref FrontendUrl, "http://localhost:9000"]
 
 Resources:
+  # --- Cognito ---
+  TodoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: todo-user-pool
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+
+  TodoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref TodoUserPool
+      ClientName: todo-app-client
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+
+  # --- API Gateway with JWT Authorizer ---
   ApiGatewayInvokeRole:
     Type: AWS::IAM::Role
     Properties:
@@ -61,7 +98,7 @@ Resources:
         openapi: "3.0.1"
         info:
           title: SAM Todo API
-          version: "1.0"
+          version: "2.0"
         x-amazon-apigateway-cors:
           allowOrigins:
             - "*"
@@ -73,6 +110,21 @@ Resources:
             - OPTIONS
           allowHeaders:
             - Content-Type
+            - Authorization
+        components:
+          securitySchemes:
+            CognitoAuth:
+              type: oauth2
+              x-amazon-apigateway-authorizer:
+                type: jwt
+                identitySource: $request.header.Authorization
+                jwtConfiguration:
+                  issuer:
+                    Fn::Sub: https://cognito-idp.${AWS::Region}.amazonaws.com/${TodoUserPool}
+                  audience:
+                    - !Ref TodoUserPoolClient
+        security:
+          - CognitoAuth: []
         paths:
           /todos:
             post:
@@ -122,6 +174,7 @@ Resources:
                   Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
                 payloadFormatVersion: "2.0"
 
+  # --- Lambda Functions ---
   CreateTodoFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -167,6 +220,7 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref TodoTable
 
+  # --- DynamoDB ---
   TodoTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -175,11 +229,21 @@ Resources:
       AttributeDefinitions:
         - AttributeName: PK
           AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
       KeySchema:
         - AttributeName: PK
           KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
 
 Outputs:
   ApiUrl:
     Description: API Gateway endpoint URL
     Value: !Sub "https://${TodoApi}.execute-api.${AWS::Region}.amazonaws.com/dev"
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref TodoUserPool
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref TodoUserPoolClient

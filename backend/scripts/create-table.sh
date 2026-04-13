@@ -19,16 +19,22 @@ for i in $(seq 1 10); do
   sleep 1
 done
 
-# Create table if not exists
+# Delete old table (schema changed from PK-only to PK+SK)
 if aws dynamodb describe-table --table-name "$TABLE_NAME" --endpoint-url "$ENDPOINT" --no-cli-pager 2>/dev/null; then
-  echo "Table $TABLE_NAME already exists"
-else
-  aws dynamodb create-table \
-    --table-name "$TABLE_NAME" \
-    --attribute-definitions AttributeName=PK,AttributeType=S \
-    --key-schema AttributeName=PK,KeyType=HASH \
-    --billing-mode PAY_PER_REQUEST \
-    --endpoint-url "$ENDPOINT" \
-    --no-cli-pager
-  echo "Table $TABLE_NAME created"
+  aws dynamodb delete-table --table-name "$TABLE_NAME" --endpoint-url "$ENDPOINT" --no-cli-pager 2>/dev/null
+  echo "Deleted old table $TABLE_NAME"
 fi
+
+# Create table with PK + SK
+aws dynamodb create-table \
+  --table-name "$TABLE_NAME" \
+  --attribute-definitions \
+    AttributeName=PK,AttributeType=S \
+    AttributeName=SK,AttributeType=S \
+  --key-schema \
+    AttributeName=PK,KeyType=HASH \
+    AttributeName=SK,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST \
+  --endpoint-url "$ENDPOINT" \
+  --no-cli-pager
+echo "Table $TABLE_NAME created (PK + SK)"
