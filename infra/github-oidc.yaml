@@ -61,6 +61,11 @@ Resources:
                 Action:
                   - dynamodb:*
                 Resource: "*"
+              - Sid: Cognito
+                Effect: Allow
+                Action:
+                  - cognito-idp:*
+                Resource: "*"
               - Sid: IAMPassRole
                 Effect: Allow
                 Action:
