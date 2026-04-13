@@ -111,7 +111,7 @@ sam-todo/
 | `template.yaml` | ローカル開発 (`sam local start-api`) | SAM Events (自動ルーティング) |
 | `template-deploy.yaml` | AWS デプロイ (GitHub Actions) | OpenAPI DefinitionBody + IAM ロール |
 
-**DefinitionBody を使う理由**: AWS Control Tower の SCP (`CT.LAMBDA.PV.2`) が `lambda:AddPermission` をブロックするため、SAM Events の自動生成する `AWS::Lambda::Permission` が使えない。代わりに API Gateway が IAM ロール (`ApiGatewayInvokeRole`) を AssumeRole して Lambda を呼び出す。
+**DefinitionBody を使う理由**: AWS Control Tower の SCP (`CT.LAMBDA.PV.2`) が `lambda:AddPermission` をブロックするため、SAM Events の自動生成する `AWS::Lambda::Permission` が使えない。代わりに API Gateway が IAM ロール (`ApiGatewayInvokeRole`) を AssumeRole して Lambda を呼び出す。詳細は [Control Tower 対応の解説](control-tower-lambda-permission.md) を参照。
 
 共通設定:
 - **API Gateway**: `AWS::Serverless::HttpApi` (v2)。REST API (v1) より低コスト・低レイテンシー

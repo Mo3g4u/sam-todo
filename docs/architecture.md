@@ -98,7 +98,7 @@ OPTIONS プリフライトは `template-deploy.yaml` の `x-amazon-apigateway-co
 | `template.yaml` | ローカル開発 | SAM Events で自動ルーティング。`sam local start-api` 互換 |
 | `template-deploy.yaml` | AWS デプロイ | OpenAPI DefinitionBody + IAM ロール。Control Tower CT.LAMBDA.PV.2 回避 |
 
-Control Tower の SCP が `lambda:AddPermission` をブロックするため、SAM Events の自動生成する `AWS::Lambda::Permission` は使えない。代わりに `ApiGatewayInvokeRole` (IAM ロール) で API Gateway が Lambda を呼び出す。
+Control Tower の SCP が `lambda:AddPermission` をブロックするため、SAM Events の自動生成する `AWS::Lambda::Permission` は使えない。代わりに `ApiGatewayInvokeRole` (IAM ロール) で API Gateway が Lambda を呼び出す。詳細は [Control Tower 対応の解説](control-tower-lambda-permission.md) を参照。
 
 ---
 
