@@ -2,7 +2,7 @@
 set -e
 
 ENDPOINT="http://localhost:8000"
-TABLE_NAME="todo-table-dev"
+TABLE_NAME="todo-table-v2"
 REGION="ap-northeast-1"
 
 # DynamoDB Local requires credentials but doesn't validate them

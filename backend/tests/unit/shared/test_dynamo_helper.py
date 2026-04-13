@@ -17,10 +17,10 @@ def _reset_singleton():
 class TestGetTable:
     @mock_aws
     def test_returns_dynamodb_table_resource(self):
-        os.environ["TABLE_NAME"] = "todo-table-dev"
+        os.environ["TABLE_NAME"] = "todo-table-v2"
         client = boto3.client("dynamodb", region_name="ap-northeast-1")
         client.create_table(
-            TableName="todo-table-dev",
+            TableName="todo-table-v2",
             KeySchema=[{"AttributeName": "PK", "KeyType": "HASH"}],
             AttributeDefinitions=[{"AttributeName": "PK", "AttributeType": "S"}],
             BillingMode="PAY_PER_REQUEST",
@@ -28,15 +28,15 @@ class TestGetTable:
 
         table = dynamo_helper.get_table()
 
-        assert table.table_name == "todo-table-dev"
+        assert table.table_name == "todo-table-v2"
 
     @mock_aws
     def test_uses_custom_endpoint_when_env_set(self):
-        os.environ["TABLE_NAME"] = "todo-table-dev"
+        os.environ["TABLE_NAME"] = "todo-table-v2"
         os.environ["DYNAMODB_ENDPOINT"] = "http://localhost:8000"
         client = boto3.client("dynamodb", region_name="ap-northeast-1")
         client.create_table(
-            TableName="todo-table-dev",
+            TableName="todo-table-v2",
             KeySchema=[{"AttributeName": "PK", "KeyType": "HASH"}],
             AttributeDefinitions=[{"AttributeName": "PK", "AttributeType": "S"}],
             BillingMode="PAY_PER_REQUEST",
@@ -44,7 +44,7 @@ class TestGetTable:
 
         table = dynamo_helper.get_table()
 
-        assert table.table_name == "todo-table-dev"
+        assert table.table_name == "todo-table-v2"
         os.environ.pop("DYNAMODB_ENDPOINT", None)
 
     def test_raises_when_table_name_not_set(self):

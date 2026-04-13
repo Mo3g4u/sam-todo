@@ -11,7 +11,7 @@ TEST_USER_ID = "test-user-00000000-0000-0000-0000-000000000000"
 
 @pytest.fixture
 def aws_env():
-    os.environ["TABLE_NAME"] = "todo-table-dev"
+    os.environ["TABLE_NAME"] = "todo-table-v2"
     os.environ["AWS_DEFAULT_REGION"] = "ap-northeast-1"
     yield
     os.environ.pop("TABLE_NAME", None)
@@ -23,7 +23,7 @@ def dynamo_table(aws_env):
         dynamo_helper._table = None
         client = boto3.client("dynamodb", region_name="ap-northeast-1")
         client.create_table(
-            TableName="todo-table-dev",
+            TableName="todo-table-v2",
             KeySchema=[
                 {"AttributeName": "PK", "KeyType": "HASH"},
                 {"AttributeName": "SK", "KeyType": "RANGE"},

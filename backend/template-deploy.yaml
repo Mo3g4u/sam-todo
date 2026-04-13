@@ -224,7 +224,7 @@ Resources:
   TodoTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: todo-table-dev
+      TableName: todo-table-v2
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: PK
