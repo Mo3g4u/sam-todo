@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: SAM Todo App Backend (AWS Deployment)
+
+# Control Tower CT.LAMBDA.PV.2 により lambda:AddPermission が SCP で制限されるため、
+# DefinitionBody + IAM ロール方式で API Gateway → Lambda の呼び出し権限を設定する。
+# SAM の Events 自動生成 (Lambda::Permission) は使わない。
+
+Parameters:
+  FrontendUrl:
+    Type: String
+    Default: ""
+    Description: Amplify frontend URL (e.g. https://main.xxxx.amplifyapp.com)
+
+Conditions:
+  HasFrontendUrl: !Not [!Equals [!Ref FrontendUrl, ""]]
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - arm64
+    Timeout: 10
+    MemorySize: 128
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref TodoTable
+        DYNAMODB_ENDPOINT: ""
+
+Resources:
+  ApiGatewayInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt CreateTodoFunction.Arn
+                  - !GetAtt ListTodosFunction.Arn
+                  - !GetAtt GetTodoFunction.Arn
+                  - !GetAtt UpdateTodoFunction.Arn
+                  - !GetAtt DeleteTodoFunction.Arn
+
+  TodoApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: dev
+      CorsConfiguration:
+        AllowOrigins:
+          - "http://localhost:9000"
+          - !If [HasFrontendUrl, !Ref FrontendUrl, !Ref "AWS::NoValue"]
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+      DefinitionBody:
+        openapi: "3.0.1"
+        info:
+          title: SAM Todo API
+          version: "1.0"
+        paths:
+          /todos:
+            post:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateTodoFunction.Arn}/invocations
+                credentials:
+                  Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
+                payloadFormatVersion: "2.0"
+            get:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ListTodosFunction.Arn}/invocations
+                credentials:
+                  Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
+                payloadFormatVersion: "2.0"
+          /todos/{id}:
+            get:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetTodoFunction.Arn}/invocations
+                credentials:
+                  Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
+                payloadFormatVersion: "2.0"
+            put:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UpdateTodoFunction.Arn}/invocations
+                credentials:
+                  Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
+                payloadFormatVersion: "2.0"
+            delete:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteTodoFunction.Arn}/invocations
+                credentials:
+                  Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
+                payloadFormatVersion: "2.0"
+
+  CreateTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.create_todo.handler
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  ListTodosFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.list_todos.handler
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  GetTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.get_todo.handler
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  UpdateTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.update_todo.handler
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  DeleteTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.delete_todo.handler
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  TodoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: todo-table-dev
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${TodoApi}.execute-api.${AWS::Region}.amazonaws.com/dev"

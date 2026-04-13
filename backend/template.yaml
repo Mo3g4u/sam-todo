@@ -1,15 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: SAM Todo App Backend
-
-Parameters:
-  FrontendUrl:
-    Type: String
-    Default: ""
-    Description: Amplify frontend URL (e.g. https://main.xxxx.amplifyapp.com)
-
-Conditions:
-  HasFrontendUrl: !Not [!Equals [!Ref FrontendUrl, ""]]
+Description: SAM Todo App Backend (Local Development)
 
 Globals:
   Function:
@@ -31,7 +22,6 @@ Resources:
       CorsConfiguration:
         AllowOrigins:
           - "http://localhost:9000"
-          - !If [HasFrontendUrl, !Ref FrontendUrl, !Ref "AWS::NoValue"]
         AllowMethods:
           - GET
           - POST
