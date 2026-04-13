@@ -157,7 +157,56 @@ API Gateway →「Lambda を呼ぶ権限を持つ IAM ロールになる」→ �
 
 つまり、Lambda 側に「誰が呼んでよいか」を設定する (`lambda:AddPermission`) のではなく、API Gateway が「Lambda を呼べる IAM ロール」を着ることで呼び出します。
 
-### 3.2 IAM ロールの定義
+### 3.2 AssumeRole (ロールの引き受け) とは
+
+IAM ロールは「権限の入った帽子」のようなものです。普段の自分とは別の権限を、**帽子をかぶることで一時的に得る**仕組みが AssumeRole です。
+
+```
+通常の IAM ユーザー/サービス:
+  自分自身の権限だけを持つ
+
+AssumeRole:
+  「Lambda を呼べる権限」が入った帽子をかぶる → その権限が一時的に使える
+```
+
+ただし、帽子は誰でもかぶれるわけではありません。帽子 (ロール) 側に**「誰がかぶってよいか」を定義する**のが**信頼ポリシー (Trust Policy)** です。
+
+### 3.3 信頼ポリシーの仕組み
+
+信頼ポリシーは「この帽子を誰がかぶれるか」を定義します:
+
+```
+┌─────────────────────────────────────────────────────┐
+│ ApiGatewayInvokeRole (帽子)                          │
+│                                                     │
+│ 信頼ポリシー (誰がかぶれるか):                          │
+│   → apigateway.amazonaws.com がかぶれる              │
+│                                                     │
+│ 権限ポリシー (かぶると何ができるか):                     │
+│   → Lambda 関数を呼び出せる                           │
+└─────────────────────────────────────────────────────┘
+```
+
+具体的な流れ:
+
+```
+1. リクエストが API Gateway に届く
+
+2. API Gateway が AWS に問い合わせる:
+   「ApiGatewayInvokeRole をかぶりたいのですが」
+
+3. AWS が信頼ポリシーをチェック:
+   「apigateway.amazonaws.com はかぶってよい」→ OK
+
+4. API Gateway が一時的な認証情報を受け取る
+   (期限付きの Access Key / Secret Key / Session Token)
+
+5. その認証情報を使って Lambda を呼び出す
+   → Lambda 側にリソースベースポリシーは不要
+   → lambda:AddPermission も不要
+```
+
+### 3.4 IAM ロールの定義
 
 `template-deploy.yaml` で以下のロールを作成します:
 
@@ -165,29 +214,33 @@ API Gateway →「Lambda を呼ぶ権限を持つ IAM ロールになる」→ �
 ApiGatewayInvokeRole:
   Type: AWS::IAM::Role
   Properties:
-    # API Gateway サービスがこのロールを引き受けられる
+    # 信頼ポリシー: 誰がこの帽子をかぶれるか
     AssumeRolePolicyDocument:
       Statement:
         - Effect: Allow
           Principal:
-            Service: apigateway.amazonaws.com
+            Service: apigateway.amazonaws.com   # ← API Gateway サービスがかぶれる
           Action: sts:AssumeRole
-    # このロールは Lambda を呼び出せる
+
+    # 権限ポリシー: かぶると何ができるか
     Policies:
       - PolicyName: InvokeLambdaPolicy
         PolicyDocument:
           Statement:
             - Effect: Allow
-              Action: lambda:InvokeFunction
+              Action: lambda:InvokeFunction     # ← Lambda を呼び出せる
               Resource:
                 - !GetAtt CreateTodoFunction.Arn
                 - !GetAtt ListTodosFunction.Arn
                 # ... (5 関数すべて)
 ```
 
-このロールは以下を意味します:
-1. **信頼ポリシー**: `apigateway.amazonaws.com` がこのロールを AssumeRole できる
-2. **権限ポリシー**: このロールは 5 つの Lambda 関数を `InvokeFunction` できる
+まとめると:
+
+| ポリシー | 意味 | 設定内容 |
+|---|---|---|
+| **信頼ポリシー** | 誰がこのロールをかぶれるか | `apigateway.amazonaws.com` |
+| **権限ポリシー** | かぶると何ができるか | 5 つの Lambda 関数を `InvokeFunction` |
 
 ### 3.3 DefinitionBody で API Gateway にロールを指定
 
