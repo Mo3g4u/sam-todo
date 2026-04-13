@@ -322,7 +322,326 @@ AWS デプロイ (GitHub Actions → sam deploy)
 
 ---
 
-## 5. 参考資料
+## 5. template-deploy.yaml 全行解説
+
+実際のテンプレート (`backend/template-deploy.yaml`) に一行ずつコメントを付けたものです。
+
+```yaml
+# ===== テンプレートの基本情報 =====
+
+AWSTemplateFormatVersion: "2010-09-09"
+# CloudFormation テンプレートのバージョン (この値は固定)
+
+Transform: AWS::Serverless-2016-10-31
+# SAM (Serverless Application Model) の変換を有効にする
+# これにより AWS::Serverless::Function などの SAM 専用リソースが使える
+
+Description: SAM Todo App Backend (AWS Deployment)
+# CloudFormation スタックの説明文 (コンソールに表示される)
+
+# ===== パラメータ (デプロイ時に外から渡せる値) =====
+
+Parameters:
+  FrontendUrl:
+    Type: String                 # 文字列型
+    Default: ""                  # デフォルトは空 (未設定でもデプロイ可能)
+    Description: Amplify frontend URL (e.g. https://main.xxxx.amplifyapp.com)
+    # GitHub Secrets の FRONTEND_URL から sam deploy --parameter-overrides で渡す
+
+# ===== 条件 (パラメータに基づく分岐) =====
+
+Conditions:
+  HasFrontendUrl: !Not [!Equals [!Ref FrontendUrl, ""]]
+  # FrontendUrl が空文字でなければ true
+  # !Ref FrontendUrl → パラメータの値を取得
+  # !Equals [..., ""]  → 空文字と比較
+  # !Not [...]         → 結果を反転
+  # → FrontendUrl が設定されていれば HasFrontendUrl = true
+
+# ===== グローバル設定 (全 Lambda 関数に適用) =====
+
+Globals:
+  Function:
+    Runtime: python3.12          # Lambda の実行環境 (Python 3.12)
+    Architectures:
+      - arm64                    # Graviton2 (ARM) を使用。x86 より安価で高速
+    Timeout: 10                  # Lambda の最大実行時間 (10秒)
+    MemorySize: 128              # Lambda のメモリ割り当て (128MB、最小値)
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref TodoTable
+        # DynamoDB テーブル名。!Ref TodoTable で後述の TodoTable リソースの
+        # テーブル名 (todo-table-dev) に解決される
+
+        DYNAMODB_ENDPOINT: ""
+        # ローカル開発時は env.json で上書きして DynamoDB Local に接続
+        # AWS デプロイ時は空文字 → dynamo_helper.py が AWS マネージド DynamoDB を使用
+
+        ALLOWED_ORIGINS: !If [HasFrontendUrl, !Ref FrontendUrl, "http://localhost:9000"]
+        # CORS で許可するオリジン。response_builder.py が参照する
+        # !If [条件, true時の値, false時の値]
+        # → FrontendUrl が設定されていれば Amplify の URL、未設定なら localhost
+
+# ===== リソース定義 =====
+
+Resources:
+
+  # ----- API Gateway が Lambda を呼ぶための IAM ロール -----
+  # これが Control Tower CT.LAMBDA.PV.2 を回避するための核心部分
+
+  ApiGatewayInvokeRole:
+    Type: AWS::IAM::Role         # IAM ロール (権限の帽子) を作成
+    Properties:
+
+      # 信頼ポリシー: 「誰がこの帽子をかぶれるか」
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"    # ポリシー言語のバージョン (この値は固定)
+        Statement:
+          - Effect: Allow        # 許可する
+            Principal:
+              Service: apigateway.amazonaws.com
+              # ↑ API Gateway サービスが、このロールを AssumeRole できる
+            Action: sts:AssumeRole
+            # ↑ 「ロールを引き受ける」というアクションを許可
+
+      # 権限ポリシー: 「この帽子をかぶると何ができるか」
+      Policies:
+        - PolicyName: InvokeLambdaPolicy     # ポリシーの名前 (任意)
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow                # 許可する
+                Action: lambda:InvokeFunction
+                # ↑ Lambda 関数を呼び出すアクション
+                Resource:
+                  - !GetAtt CreateTodoFunction.Arn   # POST /todos 用関数
+                  - !GetAtt ListTodosFunction.Arn    # GET /todos 用関数
+                  - !GetAtt GetTodoFunction.Arn      # GET /todos/{id} 用関数
+                  - !GetAtt UpdateTodoFunction.Arn   # PUT /todos/{id} 用関数
+                  - !GetAtt DeleteTodoFunction.Arn   # DELETE /todos/{id} 用関数
+                  # !GetAtt は他のリソースの属性を取得する関数
+                  # .Arn で Lambda 関数の ARN (一意な識別子) を取得
+                  # → この 5 関数だけを呼び出せる (最小権限の原則)
+
+  # ----- API Gateway (HTTP API v2) -----
+
+  TodoApi:
+    Type: AWS::Serverless::HttpApi   # SAM の HTTP API リソース
+    Properties:
+      StageName: dev                 # ステージ名。URL に /dev として含まれる
+
+      # DefinitionBody: OpenAPI (Swagger) 仕様でルーティングを定義
+      # SAM Events の代わりにこれを使う理由:
+      #   Events → lambda:AddPermission が自動生成される → SCP で拒否
+      #   DefinitionBody → credentials で IAM ロールを指定 → lambda:AddPermission 不要
+      DefinitionBody:
+        openapi: "3.0.1"             # OpenAPI 仕様のバージョン
+        info:
+          title: SAM Todo API        # API の名前
+          version: "1.0"             # API のバージョン
+
+        # CORS プリフライト (OPTIONS リクエスト) の自動処理設定
+        # ブラウザが POST/PUT/DELETE 前に送る OPTIONS リクエストに対して
+        # API Gateway が自動で CORS ヘッダー付きレスポンスを返す
+        x-amazon-apigateway-cors:
+          allowOrigins:
+            - "*"                    # プリフライトは全オリジン許可
+            # (実際の API レスポンスの CORS は Lambda が ALLOWED_ORIGINS で制限)
+          allowMethods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+          allowHeaders:
+            - Content-Type
+
+        # ----- ルート定義 -----
+        paths:
+
+          # ===== /todos =====
+          /todos:
+
+            # --- POST /todos (Todo 作成) ---
+            post:
+              x-amazon-apigateway-integration:
+              # ↑ API Gateway 独自の OpenAPI 拡張。バックエンド連携の設定
+
+                type: aws_proxy
+                # ↑ Lambda プロキシ統合。リクエスト全体を Lambda にそのまま渡し、
+                #   Lambda のレスポンスをそのままクライアントに返す
+
+                httpMethod: POST
+                # ↑ API Gateway → Lambda の呼び出しは常に POST
+                #   (クライアント → API Gateway のメソッドとは無関係)
+
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateTodoFunction.Arn}/invocations
+                # ↑ Lambda 関数の呼び出し URI
+                # Fn::Sub は文字列内の ${...} を実際の値に置換する
+                #   ${AWS::Region}           → デプロイ先リージョン (ap-northeast-1)
+                #   ${CreateTodoFunction.Arn} → Lambda 関数の ARN
+
+                credentials:
+                  Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
+                # ↑ ★★★ ここが最重要 ★★★
+                # API Gateway がこのロールを AssumeRole して Lambda を呼び出す
+                # これにより lambda:AddPermission (リソースベースポリシー) が不要になる
+                # Fn::GetAtt で ApiGatewayInvokeRole の ARN を取得
+
+                payloadFormatVersion: "2.0"
+                # ↑ HTTP API v2 のペイロード形式。Lambda に渡される event の構造を決定
+                #   1.0 = REST API 互換形式
+                #   2.0 = HTTP API v2 のネイティブ形式 (よりシンプル)
+
+            # --- GET /todos (Todo 一覧取得) ---
+            get:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ListTodosFunction.Arn}/invocations
+                credentials:
+                  Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
+                payloadFormatVersion: "2.0"
+                # (構造は POST /todos と同じ。uri の関数名だけが異なる)
+
+          # ===== /todos/{id} =====
+          # {id} はパスパラメータ。リクエスト URL の /todos/abc-123 の abc-123 が
+          # Lambda の event["pathParameters"]["id"] に渡される
+          /todos/{id}:
+
+            # --- GET /todos/{id} (Todo 単体取得) ---
+            get:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetTodoFunction.Arn}/invocations
+                credentials:
+                  Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
+                payloadFormatVersion: "2.0"
+
+            # --- PUT /todos/{id} (Todo 更新) ---
+            put:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UpdateTodoFunction.Arn}/invocations
+                credentials:
+                  Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
+                payloadFormatVersion: "2.0"
+
+            # --- DELETE /todos/{id} (Todo 削除) ---
+            delete:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteTodoFunction.Arn}/invocations
+                credentials:
+                  Fn::GetAtt: [ApiGatewayInvokeRole, Arn]
+                payloadFormatVersion: "2.0"
+
+  # ----- Lambda 関数 (5つ) -----
+  # 注意: Events プロパティがない
+  # → SAM は Lambda::Permission (リソースベースポリシー) を自動生成しない
+  # → lambda:AddPermission が呼ばれない → SCP に抵触しない
+  # → ルーティングは上の DefinitionBody で定義済み
+
+  CreateTodoFunction:
+    Type: AWS::Serverless::Function  # SAM の Lambda 関数リソース
+    Properties:
+      Handler: handlers.create_todo.handler
+      # ↑ Lambda が呼び出す関数の場所
+      # handlers/create_todo.py の handler() 関数
+
+      CodeUri: src/
+      # ↑ Lambda にデプロイするソースコードのディレクトリ
+      # src/ 以下がまるごと Lambda にアップロードされる
+      # → handlers/ と shared/ が両方含まれる
+
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+      # ↑ SAM ポリシーテンプレート
+      # TodoTable に対する CRUD (Create/Read/Update/Delete) 権限を自動生成
+      # 内部的には dynamodb:GetItem, PutItem, DeleteItem, Scan 等の権限になる
+
+  # (以下の 4 関数は構造が同じ。Handler の関数名だけが異なる)
+
+  ListTodosFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.list_todos.handler    # GET /todos
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  GetTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.get_todo.handler      # GET /todos/{id}
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  UpdateTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.update_todo.handler   # PUT /todos/{id}
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  DeleteTodoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers.delete_todo.handler   # DELETE /todos/{id}
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TodoTable
+
+  # ----- DynamoDB テーブル -----
+
+  TodoTable:
+    Type: AWS::DynamoDB::Table       # DynamoDB テーブルリソース
+    Properties:
+      TableName: todo-table-dev      # テーブル名
+      BillingMode: PAY_PER_REQUEST   # オンデマンド課金 (使った分だけ)
+      # PROVISIONED にするとスループット事前設定が必要。MVP ではオンデマンドが手軽
+
+      AttributeDefinitions:
+        - AttributeName: PK           # パーティションキーの属性名
+          AttributeType: S            # S = String (文字列型)
+      # DynamoDB ではキーに使う属性だけをここで定義する
+      # title, completed 等の属性は定義不要 (スキーマレス)
+
+      KeySchema:
+        - AttributeName: PK           # PK をパーティションキーとして使用
+          KeyType: HASH               # HASH = パーティションキー
+      # ソートキー (RANGE) は使わない (単一キー設計)
+
+# ===== 出力 (デプロイ完了時に表示される情報) =====
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${TodoApi}.execute-api.${AWS::Region}.amazonaws.com/dev"
+    # デプロイされた API の URL
+    # ${TodoApi} → API Gateway のリソース ID (例: s5ohz97p6c)
+    # ${AWS::Region} → リージョン (例: ap-northeast-1)
+    # → https://s5ohz97p6c.execute-api.ap-northeast-1.amazonaws.com/dev
+```
+
+---
+
+## 6. 参考資料
 
 - [Control Tower CT.LAMBDA.PV.2 の詳細](https://zenn.dev/rescuenow/articles/814391b63bb83d)
 - [API Gateway HTTP API の IAM 認証](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-access-control-iam.html)
