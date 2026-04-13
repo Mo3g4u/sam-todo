@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Todo app: Vue 3 (Quasar v2) frontend + AWS SAM (Lambda Python 3.12 + DynamoDB + API Gateway HTTP API v2) backend. TDD (t-wada style Red→Green→Refactor) で開発。
+Todo app: Vue 3 (Quasar v2) frontend + AWS SAM (Lambda Python 3.12 + DynamoDB + API Gateway HTTP API v2) backend. Amazon Cognito によるメール + パスワード認証付き。TDD (t-wada style Red→Green→Refactor) で開発。
 
 ## Commands
 
@@ -47,42 +47,46 @@ npm run build                 # quasar build → dist/spa/
 ### Backend
 
 Lambda handlers (1 function = 1 endpoint) in `backend/src/handlers/` share utilities from `backend/src/shared/`:
-- `dynamo_helper.py` — DynamoDB Table resource singleton (reads `TABLE_NAME` env var; `DYNAMODB_ENDPOINT` でローカル接続切り替え)
+- `auth.py` — `get_user_id(event)` で JWT claims から Cognito userId (sub) を取得
+- `dynamo_helper.py` — DynamoDB Table resource singleton (`DYNAMODB_ENDPOINT` でローカル接続切り替え)
 - `response_builder.py` — `success(body, status)` / `error(msg, status)` with Decimal JSON encoding + CORS ヘッダー (`ALLOWED_ORIGINS` env var)
-- `models.py` — `create_todo_item(title)` generates UUID, PK=`TODO#<uuid>`, timestamps
+- `models.py` — `create_todo_item(user_id, title)` generates PK=`USER#<userId>`, SK=`TODO#<uuid>`
 
-DynamoDB key design: single-table, PK=`TODO#<uuid>` (String), no GSI. Uses Scan (MVP).
+DynamoDB key design: PK=`USER#<userId>` (Cognito sub), SK=`TODO#<uuid>`. `list_todos` は `query(PK=USER#xxx)` でユーザーのデータのみ取得。
 
 Two SAM templates:
 - `template.yaml` — ローカル開発用 (Events ベース、`sam local start-api` 互換)
-- `template-deploy.yaml` — AWS デプロイ用 (DefinitionBody + IAM ロール、`lambda:AddPermission` 不使用で Control Tower CT.LAMBDA.PV.2 回避)
+- `template-deploy.yaml` — AWS デプロイ用 (DefinitionBody + IAM ロール + Cognito + JWT Authorizer)
 
 ### Frontend
 
-Component tree: `TodoPage.vue` → `TodoForm.vue` + `TodoList.vue` → `TodoItem.vue`
+Component tree: `App.vue` (ヘッダー + ログアウト) → `LoginPage` / `SignupPage` / `TodoPage` → `TodoForm` + `TodoList` → `TodoItem`
 
-Data flow: `useTodos()` composable holds reactive state (`todos`, `loading`, `error`) and calls `todoService` (thin wrapper over axios with `VITE_API_URL` base). Path alias `src/*` → `./src/*`.
+認証: `auth.service.ts` (Cognito SDK) → `useAuth()` composable → auth-guard (router beforeEach)
+データ: `useTodos()` composable → `todoService` → `api.ts` (axios + JWT インターセプター)
 
 ### Testing
 
-- Backend: pytest + moto (mock AWS). Shared `dynamo_table` fixture in `tests/conftest.py` creates mock DynamoDB table. Each handler test uses `@mock_aws` decorator.
-- Frontend: Vitest + happy-dom + @vue/test-utils. Services tested via `vi.mock('src/services/api')`. Composables tested via `vi.mock('src/services/todo.service')`.
+- Backend: pytest + moto (mock AWS). 33 テスト。`conftest.py` の `make_event()` で JWT claims 付きイベント生成。他ユーザーデータへのアクセス不可を検証。
+- Frontend: Vitest + happy-dom + @vue/test-utils. 10 テスト。
 
 ### Local Dev
 
-DynamoDB Local (Docker) で完全ローカル動作。`make dev-backend` で DynamoDB Local 起動 + テーブル作成 + SAM API 起動を一括実行。`env.json` で `DYNAMODB_ENDPOINT=http://host.docker.internal:8000` を Lambda コンテナに渡す。
+DynamoDB Local (Docker) で完全ローカル動作。`make dev-backend` で DynamoDB Local 起動 + テーブル作成 + SAM API 起動を一括実行。`env.json` で `DYNAMODB_ENDPOINT=http://host.docker.internal:8000` を Lambda コンテナに渡す。ローカルでは JWT 認証なしで動作。
 
 ### CI/CD
 
 - GitHub Actions + OIDC 認証 (長期 Access Key 不使用)
-- `backend.yml`: lint → test → (main push のみ) sam deploy
+- `backend.yml`: lint → test → (main push/手動のみ) sam deploy (template-deploy.yaml)
 - `frontend.yml`: lint → test → npm audit → audit signatures (デプロイは Amplify 側で自動)
 - `dependency-review.yml`: PR 時に脆弱な依存・禁止ライセンスを検出
 - AWS 側セットアップ: `infra/github-oidc.yaml` で OIDC プロバイダー + IAM ロール作成
-- GitHub Secrets: `AWS_ROLE_ARN` のみ
+- GitHub Secrets: `AWS_ROLE_ARN`, `FRONTEND_URL`
+- Amplify 環境変数: `VITE_API_URL`, `VITE_COGNITO_USER_POOL_ID`, `VITE_COGNITO_CLIENT_ID`
 
 ### Supply Chain Security
 
+- axios 1.15.0 に固定 (2026年3月のサプライチェーン攻撃後の安全なバージョン)
 - 全 Actions は SHA ピン留め（タグではなくフルレングス SHA で固定）
 - Dependabot が npm / pip / github-actions の依存を週次で自動更新
 - `frontend/.npmrc` に `ignore-scripts=true` で postinstall 攻撃を防止

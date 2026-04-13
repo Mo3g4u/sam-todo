@@ -109,7 +109,7 @@ sam-todo/
 | テンプレート | 用途 | ルーティング方式 |
 |---|---|---|
 | `template.yaml` | ローカル開発 (`sam local start-api`) | SAM Events (自動ルーティング) |
-| `template-deploy.yaml` | AWS デプロイ (GitHub Actions) | OpenAPI DefinitionBody + IAM ロール |
+| `template-deploy.yaml` | AWS デプロイ (GitHub Actions) | OpenAPI DefinitionBody + IAM ロール + Cognito + JWT Authorizer |
 
 **DefinitionBody を使う理由**: AWS Control Tower の SCP (`CT.LAMBDA.PV.2`) が `lambda:AddPermission` をブロックするため、SAM Events の自動生成する `AWS::Lambda::Permission` が使えない。代わりに API Gateway が IAM ロール (`ApiGatewayInvokeRole`) を AssumeRole して Lambda を呼び出す。詳細は [Control Tower 対応の解説](control-tower-lambda-permission.md) を参照。
 
@@ -122,22 +122,24 @@ sam-todo/
 ### 2.2 DynamoDB テーブル設計
 
 ```
-テーブル名: todo-table-dev
+テーブル名: todo-table-v2
 BillingMode: PAY_PER_REQUEST (オンデマンド)
 
-PK (Partition Key): "TODO#<uuid>" (String)
+PK (Partition Key): "USER#<userId>" (String) ← Cognito sub
+SK (Sort Key):      "TODO#<uuid>" (String)
 
 属性:
-  PK:         "TODO#<uuid>"
-  id:         "<uuid>"                    # API レスポンス用
+  PK:         "USER#a1b2c3..."
+  SK:         "TODO#f1e2d3..."
+  id:         "f1e2d3..."                # API レスポンス用
   title:      "買い物に行く"
   completed:  false
   created_at: "2026-04-10T12:00:00Z"     # ISO 8601
   updated_at: "2026-04-10T12:00:00Z"
 ```
 
-- **GSI**: なし。認証なし・小規模のため Scan で十分
-- **将来の拡張**: 認証追加時は `PK=USER#<userId>`, `SK=TODO#<uuid>` に移行し、GSI を検討
+- **GSI**: なし。`query(PK=USER#xxx)` でユーザーの Todo のみ効率的に取得
+- **ユーザー分離**: PK にユーザー ID を含めることで、他ユーザーのデータにはアクセス不可
 
 ### 2.3 CORS 設定
 
@@ -153,9 +155,10 @@ OPTIONS プリフライトは `template-deploy.yaml` の `x-amazon-apigateway-co
 
 | ファイル | 役割 | 主要関数 |
 |---|---|---|
+| `auth.py` | JWT claims からユーザー ID を取得 | `get_user_id(event)` |
 | `dynamo_helper.py` | DynamoDB テーブルのシングルトン取得。`DYNAMODB_ENDPOINT` でローカル接続切替 | `get_table()` |
 | `response_builder.py` | HTTP レスポンス + CORS ヘッダー。Decimal 対応 JSON シリアライズ | `success(body, status)`, `error(msg, status)` |
-| `models.py` | Todo データモデル。UUID 生成、タイムスタンプ、デフォルト値 | `create_todo_item(title)` |
+| `models.py` | Todo データモデル。UUID 生成、タイムスタンプ、PK/SK 生成 | `create_todo_item(user_id, title)` |
 
 ### 2.5 Lambda ハンドラー
 
@@ -178,6 +181,8 @@ OPTIONS プリフライトは `template-deploy.yaml` の `x-amazon-apigateway-co
 - Quasar v2 + Vite + TypeScript + Composition API
 - Node.js 24+ (LTS)
 - `@quasar/app-vite` ^2.6.0
+- `amazon-cognito-identity-js` (認証)
+- `axios` 1.15.0 (サプライチェーン攻撃後の安全なバージョンに固定)
 
 ### 3.2 型定義
 
@@ -204,18 +209,22 @@ export interface UpdateTodoRequest {
 ### 3.3 API 通信レイヤー
 
 ```
-services/api.ts          → axios インスタンス (baseURL: VITE_API_URL)
-services/todo.service.ts → list(), get(id), create(data), update(id, data), remove(id)
+services/api.ts            → axios インスタンス (baseURL: VITE_API_URL) + JWT インターセプター
+services/auth.service.ts   → signUp(), confirmSignUp(), signIn(), signOut(), getIdToken()
+services/todo.service.ts   → list(), get(id), create(data), update(id, data), remove(id)
+composables/useAuth.ts     → 認証状態管理 (email, isAuthenticated, loading, error)
 ```
 
 ### 3.4 コンポーネント構成
 
 ```
-App.vue                    ← q-layout + q-header + q-page-container
+App.vue                        ← q-layout + q-header (メール表示 + ログアウト)
 └── router-view
-    └── TodoPage.vue       ← useTodos() composable でデータ管理
-        ├── TodoForm.vue   q-input (title) + q-btn (追加)
-        └── TodoList.vue   q-list + q-spinner (loading) + 空状態メッセージ
+    ├── LoginPage.vue          ← メール + パスワード → signIn
+    ├── SignupPage.vue         ← サインアップ + 確認コード入力
+    └── TodoPage.vue           ← useTodos() (認証必須, auth-guard で保護)
+        ├── TodoForm.vue       q-input (title) + q-btn (追加)
+        └── TodoList.vue       q-list + q-spinner (loading) + 空状態メッセージ
              └── TodoItem.vue  q-item + q-checkbox (完了トグル) + q-btn (削除)
 ```
 
@@ -239,7 +248,9 @@ App.vue                    ← q-layout + q-header + q-page-container
 | ファイル | 変数 | 値 |
 |---|---|---|
 | `.env.development` | `VITE_API_URL` | `http://localhost:3000` |
-| `.env.production` | `VITE_API_URL` | Amplify ビルド時に `amplify.yml` で注入 |
+| `.env.development` | `VITE_COGNITO_USER_POOL_ID` | (ローカルでは空 = 認証なし) |
+| `.env.development` | `VITE_COGNITO_CLIENT_ID` | (ローカルでは空 = 認証なし) |
+| `.env.production` | (上記 3 変数) | Amplify ビルド時に `amplify.yml` で注入 |
 
 ---
 
@@ -260,6 +271,8 @@ frontend:
     build:
       commands:
         - echo "VITE_API_URL=$VITE_API_URL" > .env.production
+        - echo "VITE_COGNITO_USER_POOL_ID=$VITE_COGNITO_USER_POOL_ID" >> .env.production
+        - echo "VITE_COGNITO_CLIENT_ID=$VITE_COGNITO_CLIENT_ID" >> .env.production
         - npm run build
   artifacts:
     baseDirectory: frontend/dist/spa
@@ -276,7 +289,7 @@ frontend:
 - Quasar SPA のビルド出力は `dist/spa/`
 - Amplify のデフォルト Node が古いため `nvm install 24` で Node 24 LTS を使用
 - preBuild で `cd frontend` した後、build フェーズは同じディレクトリを引き継ぐ
-- Amplify コンソールで環境変数 `VITE_API_URL` を設定
+- Amplify コンソールで環境変数 `VITE_API_URL`, `VITE_COGNITO_USER_POOL_ID`, `VITE_COGNITO_CLIENT_ID` を設定
 - SPA リダイレクトルール: `/<*>` → `/index.html` (200 Rewrite) を Amplify コンソールで設定
 
 ---
@@ -324,6 +337,7 @@ Quasar Dev (9000) → SAM Local API (3000) → DynamoDB Local (8000)
 - GitHub → AWS 間の認証は OIDC (OpenID Connect) を使用。長期 Access Key は使わない
 - AWS 側セットアップ: `infra/github-oidc.yaml` を手動デプロイして OIDC プロバイダー + IAM ロールを作成
 - GitHub Secrets: `AWS_ROLE_ARN` + `FRONTEND_URL` (Amplify URL)
+- Amplify 環境変数: `VITE_API_URL` + `VITE_COGNITO_USER_POOL_ID` + `VITE_COGNITO_CLIENT_ID`
 
 ### 6.2 ワークフロー
 
@@ -392,9 +406,9 @@ aws cloudformation describe-stacks \
 
 | テスト | 件数 | 内容 |
 |---|---|---|
-| handlers | 12 | CRUD 各ハンドラーの正常系・異常系 |
-| shared | 15 | models, response_builder, dynamo_helper |
-| **合計** | **27** | |
+| handlers | 15 | CRUD 正常系・異常系 + 他ユーザーデータアクセス不可 |
+| shared | 18 | auth, models, response_builder, dynamo_helper |
+| **合計** | **33** | |
 
 ### フロントエンド (Vitest + happy-dom)
 

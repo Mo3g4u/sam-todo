@@ -8,16 +8,20 @@
 graph LR
     Browser["🌐 ブラウザ"]
     Amplify["AWS Amplify\nVue 3 + Quasar SPA"]
-    APIGW["API Gateway\nHTTP API v2"]
+    Cognito["Cognito\nUser Pool"]
+    APIGW["API Gateway\nHTTP API v2\n+ JWT Authorizer"]
     Role["IAM Role\nApiGatewayInvokeRole"]
     Lambda["Lambda × 5\nPython 3.12"]
-    DDB["DynamoDB\ntodo-table-dev"]
+    DDB["DynamoDB\ntodo-table-v2\nPK=USER# SK=TODO#"]
 
     Browser -->|HTTPS| Amplify
-    Amplify -->|REST API| APIGW
+    Amplify -->|SignUp/SignIn| Cognito
+    Cognito -->|ID Token| Amplify
+    Amplify -->|API + Bearer Token| APIGW
+    APIGW -->|JWT検証| Cognito
     APIGW -->|AssumeRole| Role
     Role -->|InvokeFunction| Lambda
-    Lambda -->|CRUD| DDB
+    Lambda -->|Query by userId| DDB
 ```
 
 ### Todo 作成の処理フロー (POST /todos)
@@ -185,9 +189,10 @@ flowchart LR
 |---|---|---|
 | フロントエンド | Vue 3 + Quasar v2 (TypeScript) | SPA、ユーザー操作 |
 | ホスティング | AWS Amplify Gen2 | フロントエンド配信、自動デプロイ |
-| API | Amazon API Gateway HTTP API v2 | REST エンドポイント、CORS プリフライト |
+| 認証 | Amazon Cognito | メール + パスワード認証、JWT 発行 |
+| API | Amazon API Gateway HTTP API v2 + JWT Authorizer | REST エンドポイント、認証、CORS |
 | コンピュート | AWS Lambda (Python 3.12, arm64) | CRUD ビジネスロジック + CORS ヘッダー |
-| データベース | Amazon DynamoDB (オンデマンド) | Todo データ永続化 |
+| データベース | Amazon DynamoDB (オンデマンド) | ユーザー別 Todo データ永続化 |
 | IaC | AWS SAM | インフラ定義・デプロイ |
 
 ---
@@ -197,11 +202,12 @@ flowchart LR
 ### 2.1 リクエストの流れ
 
 ```
-Browser → API Gateway (HTTP API v2) → Lambda Handler → DynamoDB
-                                           ↓
-                                     shared/dynamo_helper.py   (テーブル接続)
-                                     shared/models.py          (データ生成)
-                                     shared/response_builder.py (レスポンス + CORS)
+Browser → API Gateway (HTTP API v2) → JWT Authorizer (Cognito 検証) → Lambda Handler → DynamoDB
+                                                                           ↓
+                                                                     shared/auth.py             (userId 取得)
+                                                                     shared/dynamo_helper.py    (テーブル接続)
+                                                                     shared/models.py           (データ生成)
+                                                                     shared/response_builder.py (レスポンス + CORS)
 ```
 
 ### 2.2 エンドポイントと処理内容
@@ -218,6 +224,8 @@ Browser → API Gateway (HTTP API v2) → Lambda Handler → DynamoDB
 
 ```
 shared/
+├── auth.py             get_user_id(event) → JWT claims から Cognito sub を取得
+│
 ├── dynamo_helper.py    テーブルリソースのシングルトン取得
 │                       DYNAMODB_ENDPOINT → ローカル接続 (ダミー認証)
 │                       未設定 → AWS マネージド接続
@@ -234,20 +242,23 @@ shared/
 ### 2.4 DynamoDB テーブル設計
 
 ```
-テーブル名: todo-table-dev
-キー:      PK (String) = "TODO#<uuid>"
+テーブル名: todo-table-v2
+キー:      PK (String) = "USER#<userId>"  ← Cognito sub
+           SK (String) = "TODO#<uuid>"    ← Sort Key
 
 属性:
-  PK          "TODO#<uuid>"       ← パーティションキー (API レスポンスからは除去)
-  id          "<uuid>"            ← API レスポンス用
+  PK          "USER#a1b2c3..."    ← パーティションキー (API レスポンスからは除去)
+  SK          "TODO#f1e2d3..."    ← ソートキー (API レスポンスからは除去)
+  id          "f1e2d3..."         ← API レスポンス用
   title       "買い物に行く"
   completed   false
   created_at  "2026-04-10T12:00:00Z"
   updated_at  "2026-04-10T12:00:00Z"
 ```
 
-- GSI なし (MVP、小規模のため Scan で十分)
+- GSI なし。`query(PK=USER#xxx)` でユーザーの Todo のみ効率的に取得
 - BillingMode: PAY_PER_REQUEST (オンデマンド)
+- ユーザー間のデータは完全に分離 (他ユーザーの PK にはアクセス不可)
 
 ### 2.5 CORS ヘッダー
 
@@ -286,12 +297,14 @@ Control Tower の SCP が `lambda:AddPermission` をブロックするため、S
 ### 3.1 コンポーネント構成
 
 ```
-App.vue                     ← q-layout + q-header + q-page-container
+App.vue                         ← q-layout + q-header (メール表示 + ログアウト)
 └── router-view
-    └── TodoPage.vue        ← useTodos() composable でデータ管理
-        ├── TodoForm.vue    ← q-input + q-btn (追加ボタン)
-        └── TodoList.vue    ← q-spinner / 空メッセージ / q-list
-            └── TodoItem.vue ← q-checkbox + タイトル + 削除ボタン (×N)
+    ├── LoginPage.vue           ← メール + パスワード → signIn
+    ├── SignupPage.vue          ← サインアップ + 確認コード入力
+    └── TodoPage.vue            ← useTodos() (認証必須, auth-guard で保護)
+        ├── TodoForm.vue        ← q-input + q-btn (追加ボタン)
+        └── TodoList.vue        ← q-spinner / 空メッセージ / q-list
+            └── TodoItem.vue    ← q-checkbox + タイトル + 削除ボタン (×N)
 ```
 
 ### 3.2 データフロー
@@ -308,8 +321,31 @@ useTodos() composable        ← リアクティブ state: todos, loading, error
 todoService                  ← list(), create(), update(), remove()
     ↓
 api.ts (axios)               ← baseURL: VITE_API_URL
+    ↓                          interceptor: Authorization: Bearer {ID Token}
+API Gateway                  ← JWT Authorizer で Cognito ID Token を検証
     ↓
-API Gateway → Lambda → DynamoDB
+Lambda                       ← event.requestContext.authorizer.jwt.claims.sub → userId
+    ↓
+DynamoDB                     ← query/get_item/put_item (PK=USER#userId, SK=TODO#todoId)
+```
+
+### 3.2a 認証フロー
+
+```
+[サインアップ]
+User → SignupPage → useAuth().signUp() → auth.service.signUp() → Cognito
+    → メール確認コード送信 → confirmSignUp() → LoginPage にリダイレクト
+
+[ログイン]
+User → LoginPage → useAuth().signIn() → auth.service.signIn() → Cognito (SRP)
+    → ID Token + Access Token + Refresh Token → localStorage に保存
+    → TodoPage にリダイレクト
+
+[認証付き API 呼び出し]
+api.ts interceptor → auth.service.getIdToken() → Bearer Token を Authorization ヘッダーに付与
+
+[ルート保護]
+router beforeEach → auth.service.getSession() → null なら /login にリダイレクト
 ```
 
 ### 3.3 状態管理 (useTodos composable)
@@ -392,6 +428,7 @@ Developer
 - 長期 Access Key は使用しない
 - IAM ロール: `github-actions-sam-todo` (Mo3g4u/sam-todo の main ブランチのみ AssumeRole 可能)
 - GitHub Secrets: `AWS_ROLE_ARN`, `FRONTEND_URL`
+- Amplify 環境変数: `VITE_API_URL`, `VITE_COGNITO_USER_POOL_ID`, `VITE_COGNITO_CLIENT_ID`
 
 ### 5.4 Control Tower 対応
 
@@ -414,14 +451,14 @@ Developer
 
 ## 7. テスト戦略
 
-### バックエンド (pytest + moto) — 27 テスト
+### バックエンド (pytest + moto) — 33 テスト
 
 ```
 tests/
-├── conftest.py                 ← dynamo_table fixture (mock AWS DynamoDB)
+├── conftest.py                 ← dynamo_table fixture (PK+SK), make_event() (JWT claims 付き)
 └── unit/
-    ├── handlers/               ← Lambda ハンドラーの CRUD テスト (12)
-    └── shared/                 ← 共通ユーティリティのテスト (15)
+    ├── handlers/               ← CRUD テスト + 他ユーザーデータアクセス不可テスト (15)
+    └── shared/                 ← auth, models, response_builder, dynamo_helper (18)
 ```
 
 ### フロントエンド (Vitest + happy-dom) — 10 テスト

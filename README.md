@@ -1,6 +1,6 @@
 # SAM Todo App
 
-Vue 3 (Quasar) + AWS SAM (Lambda + DynamoDB + API Gateway) で構成した Todo アプリ。
+Vue 3 (Quasar) + AWS SAM (Lambda + DynamoDB + API Gateway) + Cognito 認証の Todo アプリ。
 
 ## 技術スタック
 
@@ -8,9 +8,10 @@ Vue 3 (Quasar) + AWS SAM (Lambda + DynamoDB + API Gateway) で構成した Todo 
 |---|---|
 | フロントエンド | Vue 3 + Quasar v2 (TypeScript, Composition API) |
 | ホスティング | AWS Amplify Gen2 |
-| API | Amazon API Gateway (HTTP API v2) |
+| 認証 | Amazon Cognito (メール + パスワード) |
+| API | Amazon API Gateway (HTTP API v2 + JWT Authorizer) |
 | コンピュート | AWS Lambda (Python 3.12, arm64) |
-| データベース | Amazon DynamoDB (オンデマンド) |
+| データベース | Amazon DynamoDB (オンデマンド, ユーザー別データ分離) |
 | IaC | AWS SAM |
 | CI/CD | GitHub Actions (OIDC 認証) |
 
@@ -44,8 +45,8 @@ make dev-frontend
 
 ```bash
 make test           # backend + frontend
-make test-backend   # pytest のみ
-make test-frontend  # vitest のみ
+make test-backend   # pytest のみ (33 テスト)
+make test-frontend  # vitest のみ (10 テスト)
 ```
 
 ### lint / format
@@ -61,7 +62,7 @@ make format         # ruff format + prettier write
 
 | ワークフロー | トリガー | 処理 |
 |---|---|---|
-| `backend.yml` | `backend/**` の push/PR | lint → test → (main のみ) sam deploy |
+| `backend.yml` | `backend/**` の push/PR, 手動 | lint → test → (main のみ) sam deploy |
 | `frontend.yml` | `frontend/**` の push/PR | lint → test → npm audit |
 | `dependency-review.yml` | 全 PR | 脆弱性 + ライセンス検査 |
 
@@ -84,10 +85,15 @@ aws cloudformation describe-stacks \
 # 3. GitHub Secrets に設定
 #    AWS_ROLE_ARN: 上記の ARN
 #    FRONTEND_URL: Amplify の URL (例: https://main.xxxx.amplifyapp.com)
+
+# 4. Backend デプロイ後、Cognito 情報を取得
+aws cloudformation describe-stacks \
+  --stack-name sam-todo \
+  --query 'Stacks[0].Outputs' --output table \
+  --region ap-northeast-1
+
+# 5. Amplify 環境変数に設定
+#    VITE_API_URL: ApiUrl の値
+#    VITE_COGNITO_USER_POOL_ID: UserPoolId の値
+#    VITE_COGNITO_CLIENT_ID: UserPoolClientId の値
 ```
-
-### Amplify ホスティング
-
-1. Amplify コンソール → Git リポジトリ接続 → `main` ブランチ
-2. 環境変数 `VITE_API_URL` にバックエンド API URL を設定
-3. `git push` → 自動ビルド・デプロイ
