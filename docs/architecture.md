@@ -1,5 +1,182 @@
 # SAM Todo App アーキテクチャドキュメント
 
+## 0. 全体フロー (Mermaid)
+
+### システム構成
+
+```mermaid
+graph LR
+    Browser["🌐 ブラウザ"]
+    Amplify["AWS Amplify<br/>Vue 3 + Quasar SPA"]
+    APIGW["API Gateway<br/>HTTP API v2"]
+    Role["IAM Role<br/>ApiGatewayInvokeRole"]
+    Lambda["Lambda × 5<br/>Python 3.12"]
+    DDB["DynamoDB<br/>todo-table-dev"]
+
+    Browser -->|HTTPS| Amplify
+    Amplify -->|REST API| APIGW
+    APIGW -->|AssumeRole| Role
+    Role -->|InvokeFunction| Lambda
+    Lambda -->|CRUD| DDB
+```
+
+### Todo 作成の処理フロー (POST /todos)
+
+```mermaid
+sequenceDiagram
+    actor User as ユーザー
+    participant Form as TodoForm.vue
+    participant Page as TodoPage.vue
+    participant Comp as useTodos()
+    participant Svc as todoService
+    participant Axios as api.ts (axios)
+    participant APIGW as API Gateway
+    participant Lambda as create_todo.handler
+    participant Model as shared/models.py
+    participant DB as DynamoDB
+
+    User->>Form: タイトル入力 → 「追加」クリック
+    Form->>Page: emit('add', title)
+    Page->>Comp: addTodo(title)
+    Comp->>Svc: create({ title })
+    Svc->>Axios: POST /todos { title }
+    Axios->>APIGW: HTTPS リクエスト
+    APIGW->>Lambda: event { body: '{"title":"..."}' }
+    Lambda->>Lambda: JSON パース + バリデーション
+    Lambda->>Model: create_todo_item(title)
+    Model-->>Lambda: { PK, id, title, completed, created_at, updated_at }
+    Lambda->>DB: put_item(Item)
+    DB-->>Lambda: 成功
+    Lambda-->>APIGW: { statusCode: 201, body: todo }
+    APIGW-->>Axios: HTTP 201
+    Axios-->>Svc: { data: todo }
+    Svc-->>Comp: todo
+    Comp->>Comp: todos.unshift(todo)
+    Comp-->>Page: リアクティブ更新
+    Page-->>Form: UI 再描画
+    Form-->>User: 新しい Todo が一覧の先頭に表示
+```
+
+### Todo 一覧取得の処理フロー (GET /todos)
+
+```mermaid
+sequenceDiagram
+    actor User as ユーザー
+    participant Page as TodoPage.vue
+    participant Comp as useTodos()
+    participant Svc as todoService
+    participant APIGW as API Gateway
+    participant Lambda as list_todos.handler
+    participant DB as DynamoDB
+
+    Page->>Comp: onMounted → fetchTodos()
+    Comp->>Comp: loading = true
+    Comp->>Svc: list()
+    Svc->>APIGW: GET /todos
+    APIGW->>Lambda: event {}
+    Lambda->>DB: scan()
+    DB-->>Lambda: Items[]
+    Lambda->>Lambda: PK 除去 + created_at 降順ソート
+    Lambda-->>APIGW: { statusCode: 200, body: [...] }
+    APIGW-->>Svc: HTTP 200
+    Svc-->>Comp: Todo[]
+    Comp->>Comp: todos = Todo[], loading = false
+    Comp-->>Page: リアクティブ更新
+    Page-->>User: Todo 一覧表示 (またはスピナー → 一覧)
+```
+
+### Todo 完了トグルの処理フロー (PUT /todos/{id})
+
+```mermaid
+sequenceDiagram
+    actor User as ユーザー
+    participant Item as TodoItem.vue
+    participant List as TodoList.vue
+    participant Page as TodoPage.vue
+    participant Comp as useTodos()
+    participant APIGW as API Gateway
+    participant Lambda as update_todo.handler
+    participant DB as DynamoDB
+
+    User->>Item: チェックボックスをクリック
+    Item->>List: emit('toggle', todo)
+    List->>Page: emit('toggle', todo)
+    Page->>Comp: toggleTodo(todo)
+    Comp->>APIGW: PUT /todos/{id} { completed: !todo.completed }
+    APIGW->>Lambda: event { pathParameters, body }
+    Lambda->>DB: get_item(PK) → 存在確認
+    Lambda->>Lambda: UpdateExpression 動的構築
+    Lambda->>DB: update_item(SET #c = :c, updated_at = :u)
+    DB-->>Lambda: Attributes (ALL_NEW)
+    Lambda-->>APIGW: { statusCode: 200, body: updated_todo }
+    APIGW-->>Comp: HTTP 200
+    Comp->>Comp: todos[idx] = updated_todo
+    Comp-->>Page: リアクティブ更新
+    Page-->>Item: UI 再描画
+    Item-->>User: チェック状態 + 取り消し線が切り替わる
+```
+
+### Todo 削除の処理フロー (DELETE /todos/{id})
+
+```mermaid
+sequenceDiagram
+    actor User as ユーザー
+    participant Item as TodoItem.vue
+    participant List as TodoList.vue
+    participant Page as TodoPage.vue
+    participant Comp as useTodos()
+    participant APIGW as API Gateway
+    participant Lambda as delete_todo.handler
+    participant DB as DynamoDB
+
+    User->>Item: 🗑️ ボタンをクリック
+    Item->>List: emit('remove', todo.id)
+    List->>Page: emit('remove', id)
+    Page->>Comp: removeTodo(id)
+    Comp->>APIGW: DELETE /todos/{id}
+    APIGW->>Lambda: event { pathParameters: { id } }
+    Lambda->>DB: delete_item(PK=TODO#{id})
+    DB-->>Lambda: 成功
+    Lambda-->>APIGW: { statusCode: 204 }
+    APIGW-->>Comp: HTTP 204
+    Comp->>Comp: todos = todos.filter(t => t.id !== id)
+    Comp-->>Page: リアクティブ更新
+    Page-->>User: 該当 Todo が一覧から消える
+```
+
+### CI/CD パイプライン
+
+```mermaid
+flowchart LR
+    Dev["👨‍💻 Developer"]
+    GH["GitHub<br/>Mo3g4u/sam-todo"]
+    BCI["backend.yml<br/>lint → test → deploy"]
+    FCI["frontend.yml<br/>lint → test → audit"]
+    DR["dependency-review.yml<br/>脆弱性 + ライセンス"]
+    Bot["Dependabot<br/>週次更新 PR"]
+    AWS["AWS (OIDC)"]
+    SAM["SAM Deploy"]
+    CF["CloudFormation"]
+    LB["Lambda × 5"]
+    AG["API Gateway"]
+    DDB["DynamoDB"]
+    AMP["Amplify Hosting"]
+
+    Dev -->|git push| GH
+    GH -->|backend/**| BCI
+    GH -->|frontend/**| FCI
+    GH -->|PR| DR
+    Bot -.->|PR| GH
+
+    BCI -->|OIDC AssumeRole| AWS
+    AWS --> SAM --> CF
+    CF --> LB & AG & DDB
+
+    GH -->|auto deploy| AMP
+```
+
+---
+
 ## 1. システム全体構成
 
 ![Architecture](../generated-diagrams/architecture.png)
