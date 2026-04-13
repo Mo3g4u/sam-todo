@@ -9,7 +9,12 @@ frontend:
         - npm ci --cache .npm --prefer-offline
     build:
       commands:
-        - echo "VITE_API_URL=$VITE_API_URL" > .env.production
+        - |
+          cat <<EOF > .env.production
+          VITE_API_URL=$VITE_API_URL
+          VITE_COGNITO_USER_POOL_ID=$VITE_COGNITO_USER_POOL_ID
+          VITE_COGNITO_CLIENT_ID=$VITE_COGNITO_CLIENT_ID
+          EOF
         - npm run build
   artifacts:
     baseDirectory: frontend/dist/spa
