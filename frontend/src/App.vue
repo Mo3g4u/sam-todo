@@ -18,11 +18,14 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuth } from 'src/composables/useAuth';
 
 const router = useRouter();
-const { email, isAuthenticated, signOut } = useAuth();
+const { email, isAuthenticated, checkSession, signOut } = useAuth();
+
+onMounted(checkSession);
 
 function onLogout() {
   signOut();
