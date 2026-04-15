@@ -634,9 +634,9 @@ Outputs:
     Description: API Gateway endpoint URL
     Value: !Sub "https://${TodoApi}.execute-api.${AWS::Region}.amazonaws.com/dev"
     # デプロイされた API の URL
-    # ${TodoApi} → API Gateway のリソース ID (例: s5ohz97p6c)
+    # ${TodoApi} → API Gateway のリソース ID (例: abc1234xyz)
     # ${AWS::Region} → リージョン (例: ap-northeast-1)
-    # → https://s5ohz97p6c.execute-api.ap-northeast-1.amazonaws.com/dev
+    # → https://abc1234xyz.execute-api.ap-northeast-1.amazonaws.com/dev
 ```
 
 ---

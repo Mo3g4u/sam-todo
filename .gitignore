@@ -32,6 +32,7 @@ Thumbs.db
 # Environment
 .env.local
 .env.*.local
+frontend/.env.production
 
 # E2E screenshots
 e2e/*.png
