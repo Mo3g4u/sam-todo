@@ -21,20 +21,20 @@
     "vue-router": "^4.4.0"
   },
   "devDependencies": {
-    "@quasar/app-vite": "^2.6.0",
+    "@quasar/app-vite": "^2.6.2",
     "@quasar/quasar-app-extension-testing-unit-vitest": "^1.0.0",
-    "@types/node": "^22.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@types/node": "^25.9.2",
+    "@typescript-eslint/eslint-plugin": "^8.60.1",
     "@typescript-eslint/parser": "^8.0.0",
-    "@vitejs/plugin-vue": "^6.0.5",
-    "@vue/compiler-sfc": "^3.5.0",
-    "@vue/test-utils": "^2.4.0",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "@vue/compiler-sfc": "^3.5.35",
+    "@vue/test-utils": "^2.4.11",
     "eslint": "^8.57.0",
     "eslint-plugin-vue": "^9.0.0",
-    "happy-dom": "^17.0.0",
-    "prettier": "^3.0.0",
-    "sass-embedded": "^1.80.0",
-    "typescript": "^5.6.0",
-    "vitest": "^3.0.0"
+    "happy-dom": "^20.10.2",
+    "prettier": "^3.8.3",
+    "sass-embedded": "^1.100.0",
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.6"
   }
 }
