@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@quasar/extras": "^1.16.0",
+    "@quasar/extras": "^2.0.1",
     "amazon-cognito-identity-js": "^6.3.16",
     "axios": "1.15.0",
     "quasar": "^2.17.0",
