@@ -57,7 +57,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: aws-actions/setup-sam@d78e1a4a9656d3b223e59b80676a797f20093133 # v2
+      - uses: aws-actions/setup-sam@89ddb14d60e682855e3fea4be85b3c56485de310 # v2
 
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
